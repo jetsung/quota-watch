@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "skills": {
+    "gpui-kit-design-guides": {
+      "source": "https://github.com/longbridge/gpui-kit",
+      "source_type": "git",
+      "source_url": "https://github.com/longbridge/gpui-kit",
+      "skill_path": "skills/gpui-kit-design-guides/SKILL.md",
+      "skill_folder_hash": "005c1e49b68ebef69581607461efa12f7c3ca7bc",
+      "installed_at": "2026-10-16T11:22:33.204Z",
+      "updated_at": "2026-10-16T11:22:33.204Z"
+    },
+    "gpui-kit": {
+      "source": "https://github.com/longbridge/gpui-kit",
+      "source_type": "git",
+      "source_url": "https://github.com/longbridge/gpui-kit",
+      "skill_path": "skills/gpui-kit/SKILL.md",
+      "skill_folder_hash": "c867e9cfc99d080cf684e194216485ab1669904f",
+      "installed_at": "2026-10-16T11:22:33.204Z",
+      "updated_at": "2026-10-16T11:22:33.204Z"
+    }
+  },
+  "updated_at": "2026-10-16T11:22:33.204Z"
+}
