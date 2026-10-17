@@ -5,9 +5,9 @@
 ## 功能特性
 
 - **服务卡片列表**：按下次重置时间排序，每秒刷新倒计时；状态徽章一眼可辨
-  - ✅ **正常**（绿底白字）
-  - ⚠️ **即将重置**（褐底白字，进入提醒阈值后）
-  - 🔄 **重置中**（红底白字，已过重置点，等待下一 tick 滚动）
+  - ★ **正常**（绿底白字）
+  - ☆ **即将重置**（褐底白字，进入提醒阈值后）
+  - ● **重置中**（红底白字，已过重置点，等待下一 tick 滚动）
 - **添加 / 编辑服务**：
   - 服务名、重置间隔（小时，支持小数如 `5.5`）
   - 两种输入模式（可随时切换，回车即保存）：
@@ -72,11 +72,19 @@ src/
 ├── persistence.rs    # 配置加载（损坏自动备份）与原子保存
 ├── notifications.rs  # 桌面通知抽象（notify-rust）与文案
 ├── timer_engine.rs   # 1s tick：决策（提醒/重置）与标志位管理
+├── tray.rs           # 系统托盘（KSNI）与窗口激活/隐藏
+├── kwin.rs           # KWin D-Bus 窗口控制（Wayland 最小化/任务栏）
 └── ui/
     ├── mod.rs        # RootView：列表组合与对话框交互
+    ├── titlebar.rs   # 自绘标题栏与窗口控制键
+    ├── header.rs / statusbar.rs  # 顶部标题与状态栏
     ├── service_list.rs / service_card.rs  # 服务列表与卡片渲染
     ├── footer.rs     # 全局通知开关 + 新建服务
     └── modal.rs      # 新建/编辑表单（模式切换、回车保存）
+assets/
+├── icons/            # 应用图标（svg + png）
+└── linux/
+    └── quota-watch.desktop  # Freedesktop 启动器
 ```
 
 ## License

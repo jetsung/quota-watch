@@ -1,0 +1,53 @@
+name: Build Windows (artifact only)
+
+# 轻量 Windows 构建：仅手动触发，只产出 x86_64 MSVC 可执行文件 zip，
+# 不构建其他平台、不发布 release。用于按需获取 Windows 版本。
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '构建的分支（留空则使用默认分支）'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_DIR: dist
+
+jobs:
+  build-windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+      - name: Update Rust
+        run: |
+          rustup update
+          rustc --version
+      - name: Install zip utility
+        run: choco install zip -y
+        shell: powershell
+      - name: Install target for Windows
+        shell: bash
+        run: rustup target add x86_64-pc-windows-msvc
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - name: Build for Windows (x86_64)
+        shell: bash
+        run: cargo build -p quota-watch --release --target x86_64-pc-windows-msvc
+      - name: Create release zip
+        shell: bash
+        run: |
+          VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          mkdir "${{ env.RELEASE_DIR }}"
+          zip -j "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-x86_64-pc-windows-msvc.zip" target/x86_64-pc-windows-msvc/release/quota-watch.exe
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-x86_64
+          path: ${{ env.RELEASE_DIR }}/*
+          retention-days: 30

@@ -1,10 +1,10 @@
 use crate::models::{self, AppState, ServiceEntry};
+use crate::ui::checkbox::render_checkbox;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
@@ -23,6 +23,8 @@ const LAST_RESET_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 /// 任意输入框内按回车等同点击"保存"。编辑预填充；关键计时字段变更由 `AppState::update` 自动重置 RuntimeFlags。
 pub struct AddEditView {
     state: Entity<AppState>,
+    /// 自绘标题栏的标题文字（编辑服务：xxx / 添加服务）。
+    title: String,
     editing: Option<ServiceEntry>,
     /// 当前表单的重置配置模式（仅影响输入语义）。
     /// 枚举仍保留 LastReset 变体以兼容旧配置序列化，但表单不再提供该选项，
@@ -81,6 +83,7 @@ impl AddEditView {
         cx: &mut Context<Self>,
         state: Entity<AppState>,
         editing: Option<ServiceEntry>,
+        title: String,
     ) -> Self {
         // 预填统一按系统本地时区格式化
         let now = Utc::now();
@@ -130,6 +133,7 @@ impl AddEditView {
 
         let view = Self {
             state,
+            title,
             reset_config_mode: initial_mode,
             editing,
             name: cx.new(|cx| InputState::new(window, cx).default_value(name_default)),
@@ -241,10 +245,11 @@ impl AddEditView {
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 1. 读取并解析表单
         let name = self.name.read(cx).value().to_string().trim().to_string();
-        let interval: f64 = match self.interval.read(cx).value().parse() {
-            Ok(v) => v,
-            Err(_) => {
-                self.error = Some("重置间隔必须是数字（小时）".into());
+        let interval_text = self.interval.read(cx).value().trim().to_string();
+        let interval: f64 = match models::parse_interval_expr(&interval_text) {
+            Some(v) => v,
+            None => {
+                self.error = Some("重置间隔必须是数字或公式，如 5 * 7（小时）".into());
                 cx.notify();
                 return;
             }
@@ -379,10 +384,36 @@ impl AddEditView {
 
 impl Render for AddEditView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        // 自绘标题栏：标题居左、关闭按钮✕居右（替代库 Dialog 自带的 title/X）
+        let title_bar = h_flex()
+            .justify_between()
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .text_color(theme.foreground)
+                    .child(self.title.clone()),
+            )
+            .child(
+                div()
+                    .id("dialog-close-x")
+                    .text_size(px(14.))
+                    .font_weight(gpui_kit::FontWeight::BOLD)
+                    .text_color(theme.muted_foreground)
+                    .cursor_pointer()
+                    .hover(|d| d.text_color(theme.foreground))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                        window.close_all_dialogs(cx);
+                    }))
+                    .child("✕"),
+            );
         v_flex()
             .w_full()
             .p_4()
             .gap_3()
+            .child(title_bar)
             .child(
                 v_flex()
                     .gap_1()
@@ -392,7 +423,7 @@ impl Render for AddEditView {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(field_label("重置间隔（小时，允许小数，如 5.5）"))
+                    .child(field_label("重置间隔（小时，支持公式，如 5 * 7）"))
                     .child(Input::new(&self.interval).w_full()),
             )
             .child(
@@ -466,16 +497,16 @@ impl Render for AddEditView {
                             .child(Input::new(&self.secondary)),
                     ),
             )
-            .child(
-                Checkbox::new("is-muted")
-                    .label("静音重复提醒（仅首次提醒）")
-                    .checked(self.muted)
-                    .font_weight(gpui_kit::FontWeight::BOLD)
-                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                        this.muted = *checked;
-                        cx.notify();
-                    })),
-            )
+            .child(render_checkbox(
+                "is-muted",
+                "静音重复提醒（仅首次提醒）",
+                self.muted,
+                cx.listener(|this, checked: &bool, _, cx| {
+                    this.muted = *checked;
+                    cx.notify();
+                }),
+                cx,
+            ))
             .when_some(self.error.clone(), |el, err| {
                 el.child(
                     div()
@@ -489,11 +520,14 @@ impl Render for AddEditView {
                 h_flex()
                     .justify_end()
                     .gap_2()
-                    .child(Button::new("cancel").label("取消").font_weight(gpui_kit::FontWeight::BOLD).on_click(cx.listener(
-                        move |_, _, window, cx| {
-                            window.close_all_dialogs(cx);
-                        },
-                    )))
+                    .child(
+                        Button::new("cancel")
+                            .label("取消")
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                window.close_all_dialogs(cx);
+                            })),
+                    )
                     .child(
                         Button::new("submit")
                             .primary()

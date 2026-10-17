@@ -46,6 +46,7 @@ impl NotificationService for MockNotificationService {
 /// 通知文案（Decision 4）：
 /// - Condition A: "[Service] 将在 X 分钟后重置"
 /// - Condition B: "[Service] 即将重置！还剩 Y 分钟"
+///
 /// 正文附加本地时区 next_reset_at。
 pub fn title_first_alert(service_name: &str, minutes: u32) -> String {
     format!("[{}] 将在 {} 分钟后重置", service_name, minutes)
@@ -61,7 +62,7 @@ pub fn title_reset(service_name: &str) -> String {
 
 pub fn body_with_next_reset(next_reset_at: chrono::DateTime<Utc>) -> String {
     format!(
-        "下次重置：{}（本地时间）",
+        "下次重置：{}",
         next_reset_at
             .with_timezone(&Local)
             .format("%Y-%m-%d %H:%M:%S")
@@ -84,8 +85,14 @@ mod tests {
 
     #[test]
     fn message_texts() {
-        assert_eq!(title_first_alert("openai", 30), "[openai] 将在 30 分钟后重置");
-        assert_eq!(title_recurring("openai", 2), "[openai] 即将重置！还剩 2 分钟");
+        assert_eq!(
+            title_first_alert("openai", 30),
+            "[openai] 将在 30 分钟后重置"
+        );
+        assert_eq!(
+            title_recurring("openai", 2),
+            "[openai] 即将重置！还剩 2 分钟"
+        );
         assert_eq!(title_reset("gpt"), "[gpt] 配额已重置");
     }
 

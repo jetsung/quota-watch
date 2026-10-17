@@ -14,7 +14,9 @@ pub fn config_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".config").join("quota-notifier").join("services.json")
+    home.join(".config")
+        .join("quota-notifier")
+        .join("services.json")
 }
 
 /// 启动加载：文件不存在返回默认状态；解析失败则备份为 `services.json.bak.<timestamp>` 并以空状态启动。
@@ -66,8 +68,8 @@ pub fn save(state: &PersistedState) -> anyhow::Result<()> {
     let json = serde_json::to_string_pretty(state).context("序列化配置失败")?;
     let tmp = path.with_extension("json.tmp");
     {
-        let mut f =
-            fs::File::create(&tmp).with_context(|| format!("创建临时文件失败: {}", tmp.display()))?;
+        let mut f = fs::File::create(&tmp)
+            .with_context(|| format!("创建临时文件失败: {}", tmp.display()))?;
         f.write_all(json.as_bytes()).context("写入临时文件失败")?;
         f.sync_all().ok();
     }

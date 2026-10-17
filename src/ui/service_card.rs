@@ -1,8 +1,8 @@
 use crate::models::{ServiceEntry, format_countdown};
+use crate::ui::checkbox::render_checkbox;
 use chrono::Utc;
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::ActiveTheme as _;
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ClickEvent, IntoElement, MouseDownEvent, ParentElement, Styled, Window, div,
@@ -11,19 +11,30 @@ use gpui_kit::{
 
 use std::rc::Rc;
 
+/// 卡片操作回调类型（复杂函数指针类型的别名，避免字段处触发 type_complexity）。
+type MuteCallback = Rc<dyn Fn(&bool, &mut Window, &mut App) + Send + Sync>;
+type ClickCallback = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync>;
+type MouseDownCallback = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + Send + Sync>;
+
 /// 单张服务卡片的操作回调（由 RootView 用 cx.listener 注入）。
 /// 组件 API 要求 Sized 的 `impl Fn`，故字段持有 `Rc<dyn Fn>`，渲染时包一层具体闭包。
 pub struct CardActions {
-    pub on_toggle_mute: Rc<dyn Fn(&bool, &mut Window, &mut App) + Send + Sync>,
-    pub on_edit: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync>,
-    pub on_delete: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + Send + Sync>,
-    pub on_delete_context: Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + Send + Sync>,
+    pub on_toggle_mute: MuteCallback,
+    pub on_edit: ClickCallback,
+    pub on_delete: ClickCallback,
+    pub on_delete_context: MouseDownCallback,
 }
 
 /// 渲染单张服务卡片：服务名、状态标签、HH:MM:SS 倒计时、
 /// 阈值内切换 warning/danger 主题色、Mute Checkbox、Edit/Delete 按钮、右键删除。
 /// 纯函数生成元素（RenderOnce 语义：静态部分每次重建成本可忽略，仅倒计时文本随 tick 变化）。
-pub fn render_service_card(entry: &ServiceEntry, actions: CardActions, cx: &App) -> AnyElement {
+/// `stretch`：多列布局时卡片在 h_flex 行内等宽伸缩（单列列表保持 w_full 即可）。
+pub fn render_service_card(
+    entry: &ServiceEntry,
+    actions: CardActions,
+    cx: &App,
+    stretch: bool,
+) -> AnyElement {
     let now = Utc::now();
     let remaining = entry.time_until_reset(now);
     let remaining_secs = remaining.num_seconds();
@@ -63,7 +74,7 @@ pub fn render_service_card(entry: &ServiceEntry, actions: CardActions, cx: &App)
         .to_string();
     let id = entry.id;
 
-    v_flex()
+    let mut card = v_flex()
         .id(id)
         .w_full()
         .bg(theme.colors.secondary)
@@ -72,118 +83,114 @@ pub fn render_service_card(entry: &ServiceEntry, actions: CardActions, cx: &App)
         .when(urgent, |el| el.bg(cx.theme().warning.opacity(0.08)))
         .rounded_md()
         .p_3()
-        .gap_2()
-        .on_mouse_down(gpui_kit::MouseButton::Right, {
-            let f = actions.on_delete_context;
-            move |e: &MouseDownEvent, w: &mut Window, a: &mut App| f(e, w, a)
-        })
-        .child(
-            h_flex()
-                .justify_between()
-                .items_center()
-                .child({
-                    // id 前置使两分支同为 Stateful<Div>；配置了 URL 的条目标题可点击，在系统浏览器打开
-                    let title = div()
-                        .id(format!("title-{}", id))
-                        .text_size(px(16.))
-                        .font_weight(gpui_kit::FontWeight::BOLD)
-                        .child(entry.service_name.clone());
-                    match entry.url.clone() {
-                        Some(url) => title
+        .gap_2();
+    // 多列模式：在 h_flex 行内等宽伸缩
+    if stretch {
+        card = card.flex_grow_1().flex_shrink_1().min_w_0();
+    }
+    card.on_mouse_down(gpui_kit::MouseButton::Right, {
+        let f = actions.on_delete_context;
+        move |e: &MouseDownEvent, w: &mut Window, a: &mut App| f(e, w, a)
+    })
+    .child(
+        h_flex()
+            .justify_between()
+            .items_center()
+            .child({
+                // id 前置使两分支同为 Stateful<Div>；配置了 URL 的条目标题可点击，在系统浏览器打开
+                let title = div()
+                    .id(format!("title-{}", id))
+                    .text_size(px(16.))
+                    .font_weight(gpui_kit::FontWeight::BOLD)
+                    .child(entry.service_name.clone());
+                match entry.url.clone() {
+                    Some(url) => title
+                        .cursor_pointer()
+                        .text_color(theme.colors.primary)
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                    None => title,
+                }
+            })
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_sm()
+                    .bg(badge_bg)
+                    .text_size(px(14.))
+                    .font_weight(gpui_kit::FontWeight::BOLD)
+                    .text_color(gpui_kit::white())
+                    .child(status_text),
+            ),
+    )
+    .child(
+        div()
+            .text_size(px(28.))
+            .font_weight(gpui_kit::FontWeight::BOLD)
+            .child(countdown),
+    )
+    .child(
+        div()
+            .text_size(px(12.))
+            .font_weight(gpui_kit::FontWeight::BOLD)
+            .child(format!("下次重置: {}", next_local)),
+    )
+    .child(
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(render_checkbox(
+                format!("mute-{}", id),
+                "静音重复提醒",
+                entry.is_muted,
+                {
+                    let f = actions.on_toggle_mute;
+                    move |c: &bool, w: &mut Window, a: &mut App| f(c, w, a)
+                },
+                cx,
+            ))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child({
+                        let border = theme.colors.border;
+                        div()
+                            .id(format!("edit-{}", id))
+                            .text_size(px(13.))
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .text_color(theme.colors.foreground)
                             .cursor_pointer()
-                            .text_color(theme.colors.primary)
-                            .on_click(move |_, _, cx| cx.open_url(&url)),
-                        None => title,
-                    }
-                })
-                .child(
-                    h_flex()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_sm()
-                        .bg(badge_bg)
-                        .text_size(px(14.))
-                        .font_weight(gpui_kit::FontWeight::BOLD)
-                        .text_color(gpui_kit::white())
-                        .child(status_text),
-                ),
-        )
-        .child(
-            div()
-                .text_size(px(28.))
-                .font_weight(gpui_kit::FontWeight::BOLD)
-                .child(countdown),
-        )
-        .child(
-            div()
-                .text_size(px(12.))
-                .font_weight(gpui_kit::FontWeight::BOLD)
-                .child(format!("下次重置: {}", next_local)),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    Checkbox::new(format!("mute-{}", id))
-                        .label("静音重复提醒")
-                        .checked(entry.is_muted)
-                        .font_weight(gpui_kit::FontWeight::BOLD)
-                        .on_change({
-                            let f = actions.on_toggle_mute;
-                            move |c: &bool, w: &mut Window, a: &mut App| f(c, w, a)
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child({
-                            let border = theme.colors.border;
-                            div()
-                                .id(format!("edit-{}", id))
-                                .text_size(px(13.))
-                                .font_weight(gpui_kit::FontWeight::BOLD)
-                                .text_color(theme.colors.foreground)
-                                .cursor_pointer()
-                                .px_2()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(gpui_kit::hsla(0., 0., 0., 0.))
-                                .hover(move |s| {
-                                    s.bg(gpui_kit::white())
-                                        .border_1()
-                                        .border_color(border)
-                                })
-                                .child("编辑")
-                                .on_click({
-                                    let f = actions.on_edit;
-                                    move |e: &ClickEvent, w: &mut Window, a: &mut App| f(e, w, a)
-                                })
-                        })
-                        .child({
-                            let border = theme.colors.border;
-                            div()
-                                .id(format!("delete-{}", id))
-                                .text_size(px(13.))
-                                .font_weight(gpui_kit::FontWeight::BOLD)
-                                .text_color(theme.colors.danger)
-                                .cursor_pointer()
-                                .px_2()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(gpui_kit::hsla(0., 0., 0., 0.))
-                                .hover(move |s| {
-                                    s.bg(gpui_kit::white())
-                                        .border_1()
-                                        .border_color(border)
-                                })
-                                .child("删除")
-                                .on_click({
-                                    let f = actions.on_delete;
-                                    move |e: &ClickEvent, w: &mut Window, a: &mut App| f(e, w, a)
-                                })
-                        }),
-                ),
-        )
-        .into_any_element()
+                            .px_2()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(gpui_kit::hsla(0., 0., 0., 0.))
+                            .hover(move |s| s.bg(gpui_kit::white()).border_1().border_color(border))
+                            .child("编辑")
+                            .on_click({
+                                let f = actions.on_edit;
+                                move |e: &ClickEvent, w: &mut Window, a: &mut App| f(e, w, a)
+                            })
+                    })
+                    .child({
+                        let border = theme.colors.border;
+                        div()
+                            .id(format!("delete-{}", id))
+                            .text_size(px(13.))
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .text_color(theme.colors.danger)
+                            .cursor_pointer()
+                            .px_2()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(gpui_kit::hsla(0., 0., 0., 0.))
+                            .hover(move |s| s.bg(gpui_kit::white()).border_1().border_color(border))
+                            .child("删除")
+                            .on_click({
+                                let f = actions.on_delete;
+                                move |e: &ClickEvent, w: &mut Window, a: &mut App| f(e, w, a)
+                            })
+                    }),
+            ),
+    )
+    .into_any_element()
 }

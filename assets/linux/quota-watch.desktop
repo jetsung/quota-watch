@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Quota Watch
+Name[zh_CN]=配额监控
+Comment=Cross-platform AI quota reset countdown desktop app
+Comment[zh_CN]=跨平台 AI 配额重置倒计时桌面应用
+Exec=/opt/quota-watch/quota-watch
+TryExec=/opt/quota-watch/quota-watch
+Icon=quota-watch
+Terminal=false
+Categories=Utility;Monitor;
+Keywords=quota;ai;countdown;timer;
+StartupNotify=false

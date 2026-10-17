@@ -1,0 +1,58 @@
+name: Build Linux (artifact only)
+
+# 轻量 Linux 构建：仅手动触发，只产出 x86_64-gnu 可执行文件 tarball，
+# 不构建其他架构、不发布 release。用于按需获取 Linux 版本。
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '构建的分支（留空则使用默认分支）'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_DIR: dist
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+      - name: Install system dependencies
+        # GPUI Linux 依赖：zed-font-kit/freetype-sys 构建脚本经 pkg-config 查找
+        # fontconfig/freetype2；xkbcommon 以 #[link] 链接，需要开发符号链接
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
+      - name: Update Rust
+        run: |
+          rustup update
+          rustc --version
+      - name: Install target for Linux
+        run: rustup target add x86_64-unknown-linux-gnu
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - name: Build for Linux (x86_64)
+        run: cargo build -p quota-watch --release --target x86_64-unknown-linux-gnu
+      - name: Create tarball
+        run: |
+          VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          mkdir -p "${{ env.RELEASE_DIR }}"
+          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-x86_64-unknown-linux-gnu.tar.xz" -C target/x86_64-unknown-linux-gnu/release quota-watch
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-x86_64
+          path: ${{ env.RELEASE_DIR }}/*
+          retention-days: 30

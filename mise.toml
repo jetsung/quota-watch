@@ -1,0 +1,6 @@
+# 项目开发环境（mise 管理工具链版本，进入目录自动生效）
+[tools]
+# 与当前 CI / 本地一致的 Rust 工具链
+rust = "1.99.0"
+# just：构建命令入口（justfile）
+just = "latest"

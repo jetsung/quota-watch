@@ -38,9 +38,128 @@ pub struct ServiceEntry {
     pub url: Option<String>,
 }
 
+/// 解析重置间隔表达式（单位：小时）：支持十进制数（含小数点）与
+/// `+ - * /` 四则运算、括号及空白，如 `"5"`、`"5.5"`、`"5.00 * 7"`（= 35）。
+/// 非法表达式、除零（结果非有限值）返回 None。
+pub fn parse_interval_expr(input: &str) -> Option<f64> {
+    struct Parser {
+        chars: Vec<char>,
+        pos: usize,
+    }
+    impl Parser {
+        fn skip_ws(&mut self) {
+            while self.pos < self.chars.len() && self.chars[self.pos].is_ascii_whitespace() {
+                self.pos += 1;
+            }
+        }
+        fn peek(&self) -> Option<char> {
+            self.chars.get(self.pos).copied()
+        }
+        fn next(&mut self) -> Option<char> {
+            let c = self.peek();
+            if c.is_some() {
+                self.pos += 1;
+            }
+            c
+        }
+        // number := 数字序列（最多一个小数点）
+        fn number(&mut self) -> Option<f64> {
+            let start = self.pos;
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() || c == '.' {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+            if self.pos == start {
+                return None;
+            }
+            let s: String = self.chars[start..self.pos].iter().collect();
+            if s.matches('.').count() > 1 {
+                return None;
+            }
+            s.parse::<f64>().ok()
+        }
+        // factor := number | '(' expr ')' | '+' factor | '-' factor
+        fn factor(&mut self) -> Option<f64> {
+            self.skip_ws();
+            match self.peek()? {
+                '(' => {
+                    self.next()?;
+                    let v = self.expr()?;
+                    self.skip_ws();
+                    if self.next()? != ')' {
+                        return None;
+                    }
+                    Some(v)
+                }
+                '+' => {
+                    self.next()?;
+                    self.factor()
+                }
+                '-' => {
+                    self.next()?;
+                    Some(-self.factor()?)
+                }
+                c if c.is_ascii_digit() || c == '.' => self.number(),
+                _ => None,
+            }
+        }
+        // term := factor ('*'|'/' factor)*
+        fn term(&mut self) -> Option<f64> {
+            let mut v = self.factor()?;
+            loop {
+                self.skip_ws();
+                match self.peek() {
+                    Some('*') => {
+                        self.next()?;
+                        v *= self.factor()?;
+                    }
+                    Some('/') => {
+                        self.next()?;
+                        v /= self.factor()?;
+                    }
+                    _ => break,
+                }
+            }
+            Some(v)
+        }
+        // expr := term ('+'|'-' term)*
+        fn expr(&mut self) -> Option<f64> {
+            let mut v = self.term()?;
+            loop {
+                self.skip_ws();
+                match self.peek() {
+                    Some('+') => {
+                        self.next()?;
+                        v += self.term()?;
+                    }
+                    Some('-') => {
+                        self.next()?;
+                        v -= self.term()?;
+                    }
+                    _ => break,
+                }
+            }
+            Some(v)
+        }
+    }
+    let mut p = Parser {
+        chars: input.chars().collect(),
+        pos: 0,
+    };
+    let v = p.expr()?;
+    p.skip_ws();
+    if p.pos != p.chars.len() || !v.is_finite() {
+        return None;
+    }
+    Some(v)
+}
+
 impl ServiceEntry {
     pub fn validate(&self) -> anyhow::Result<()> {
-        if !(self.interval_hours > 0.0) {
+        if !self.interval_hours.is_finite() || self.interval_hours <= 0.0 {
             anyhow::bail!("interval_hours 必须大于 0");
         }
         if self.reminder_threshold_minutes as f64 * 60.0 > self.interval_hours * 3600.0 {
@@ -183,7 +302,10 @@ pub fn format_countdown(d: chrono::Duration) -> String {
 // ---------------------------------------------------------------------------
 
 /// 在任意 `AppContext`（App / Context<View> 等）上创建 `Entity<AppState>`。
-pub fn new_app_state<C: gpui_kit::AppContext>(cx: &mut C, persisted: PersistedState) -> gpui_kit::Entity<AppState> {
+pub fn new_app_state<C: gpui_kit::AppContext>(
+    cx: &mut C,
+    persisted: PersistedState,
+) -> gpui_kit::Entity<AppState> {
     cx.new(|_| AppState::from_persisted(persisted))
 }
 
@@ -201,22 +323,20 @@ where
 {
     let mut result = None;
     let mut err = None;
-    state.update(cx, |app_state, s_cx| {
-        match f(app_state, s_cx) {
-            Ok(r) => {
-                s_cx.emit(AppStateChanged);
-                s_cx.notify();
-                let snapshot = app_state.to_persisted();
-                s_cx.spawn(async move |_weak, _async_cx| {
-                    if let Err(e) = crate::persistence::save(&snapshot) {
-                        eprintln!("持久化失败: {:#}", e);
-                    }
-                })
-                .detach();
-                result = Some(r);
-            }
-            Err(e) => err = Some(format!("{:#}", e)),
+    state.update(cx, |app_state, s_cx| match f(app_state, s_cx) {
+        Ok(r) => {
+            s_cx.emit(AppStateChanged);
+            s_cx.notify();
+            let snapshot = app_state.to_persisted();
+            s_cx.spawn(async move |_weak, _async_cx| {
+                if let Err(e) = crate::persistence::save(&snapshot) {
+                    eprintln!("持久化失败: {:#}", e);
+                }
+            })
+            .detach();
+            result = Some(r);
         }
+        Err(e) => err = Some(format!("{:#}", e)),
     });
     if let Some(e) = err {
         on_error(e, cx);
@@ -241,6 +361,22 @@ mod tests {
             reset_config_mode: Default::default(),
             url: None,
         }
+    }
+
+    #[test]
+    fn parse_interval_expr_cases() {
+        assert_eq!(parse_interval_expr("5"), Some(5.0));
+        assert_eq!(parse_interval_expr("5.5"), Some(5.5));
+        assert_eq!(parse_interval_expr("5.00 * 7"), Some(35.0));
+        assert_eq!(parse_interval_expr(" 12 / 4 "), Some(3.0));
+        assert_eq!(parse_interval_expr("(1 + 2) * 3"), Some(9.0));
+        assert_eq!(parse_interval_expr("2.5*4"), Some(10.0));
+        assert_eq!(parse_interval_expr("10 - 4 + 2"), Some(8.0));
+        assert_eq!(parse_interval_expr("1 / 0"), None); // 除零 → inf
+        assert_eq!(parse_interval_expr("5 ** 2"), None);
+        assert_eq!(parse_interval_expr("1.2.3"), None);
+        assert_eq!(parse_interval_expr(""), None);
+        assert_eq!(parse_interval_expr("5 h"), None);
     }
 
     #[test]

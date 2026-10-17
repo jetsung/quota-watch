@@ -1,0 +1,243 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      # 仅匹配正式版标签 vX.Y.Z（如 v1.0.0、v10.20.30），排除预发布版本（如 v1.0.0-alpha、v1.0.0-rc1）
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+      - '!v[0-9]*.[0-9]*.[0-9]*-*'
+      # 支持 beta 版（如 v1.0.0-beta、v1.0.0-beta.1）
+      - 'v[0-9]*.[0-9]*.[0-9]*-beta*'
+      - 'v[0-9]*.[0-9]*.[0-9]*-rc*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: '要补发资产的已有 tag（如 v1.0.0），留空则使用当前分支/引用'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# 同一 tag 重复推送不取消进行中的构建（发布 release 不可逆）
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_DIR: dist
+
+jobs:
+  extract-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.TAG_NAME }}
+      version: ${{ steps.tag.outputs.VERSION }}
+    steps:
+      - name: Extract tag name
+        id: tag
+        run: |
+          TAG="${{ inputs.tag_name || github.ref }}"
+          TAG="${TAG#refs/tags/}"
+          # 校验 tag 格式（vX.Y.Z，可选 -beta[N] 后缀），
+          # 防止手动触发时留空用分支名当版本号建出错误 release
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta(\.[0-9]+)?)?$ ]]; then
+            echo "::error::tag '$TAG' 不符合 v[X.Y.Z]（或 v[X.Y.Z-beta[N]）格式，已中止"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "TAG_NAME=$TAG" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+  build-linux:
+    needs: [extract-version]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+            ref: ${{ needs.extract-version.outputs.tag }}
+            submodules: true
+      - name: Update Rust
+        run: |
+          rustup update
+          rustc --version
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-linux-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-linux-
+      - uses: jetsung/setup-zig@v1
+        with:
+          version: "0.16.0"
+      - name: Check zig version
+        run: |
+          zig version
+      - name: Install target for Linux
+        run: |
+          for arch in x86_64 aarch64 loongarch64; do
+            rustup target add $arch-unknown-linux-gnu
+          done
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+      - name: Install cargo-deb and cargo-generate-rpm
+        run: |
+          cargo install cargo-deb
+          cargo install cargo-generate-rpm
+      - name: Build for Linux
+        run: |
+          # GUI 应用依赖系统 wayland/x11/GPU 库，只构建 gnu（glibc）二进制，
+          # musl 静态链接对 GUI 无意义
+          for arch in x86_64 aarch64 loongarch64; do
+            cargo-zigbuild zigbuild -p quota-watch --release --target $arch-unknown-linux-gnu
+          done
+      - name: Package .deb, .rpm and tarball
+        run: |
+          mkdir ${{ env.RELEASE_DIR }}
+          for arch in x86_64 aarch64 loongarch64; do
+            # .deb (gnu)
+            # --no-strip: the cross binary is built by cargo-zigbuild; the host
+            # `strip` cannot recognise aarch64/loongarch64 binaries, so skip it.
+            cargo deb --target $arch-unknown-linux-gnu --no-build --no-strip
+            mv target/$arch-unknown-linux-gnu/debian/*.deb ${{ env.RELEASE_DIR }}/
+
+            # .rpm (gnu) — cargo-generate-rpm emits the .rpm under
+            # target/$arch-unknown-linux-gnu/generate-rpm/, so locate it with find
+            cargo generate-rpm --target $arch-unknown-linux-gnu
+            mv target/$arch-unknown-linux-gnu/generate-rpm/*.rpm ${{ env.RELEASE_DIR }}/
+
+            # tarball (gnu)
+            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-$arch-unknown-linux-gnu.tar.xz" -C target/$arch-unknown-linux-gnu/release quota-watch
+          done
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-linux
+          path: ${{ env.RELEASE_DIR }}/*
+          retention-days: 1
+
+  build-macos:
+    needs: [extract-version]
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+            ref: ${{ needs.extract-version.outputs.tag }}
+            submodules: true
+      - name: Update Rust
+        run: |
+          rustup update
+          rustc --version
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-macos-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-macos-
+      - name: Install target for MacOS
+        run: |
+          for arch in x86_64 aarch64; do
+            rustup target add $arch-apple-darwin
+          done
+      - name: Build for MacOS
+        run: |
+          for arch in x86_64 aarch64; do
+            cargo build -p quota-watch --release --target $arch-apple-darwin
+          done
+      - name: Create release tarballs
+        run: |
+          mkdir ${{ env.RELEASE_DIR }}
+          for arch in x86_64 aarch64; do
+            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
+          done
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-macos
+          path: ${{ env.RELEASE_DIR }}/*
+          retention-days: 1
+
+  build-windows:
+    needs: [extract-version]
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+            ref: ${{ needs.extract-version.outputs.tag }}
+            submodules: true
+      - name: Update Rust
+        run: |
+          rustup update
+          rustc --version
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-windows-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-windows-
+      - name: Install zip utility
+        run: choco install zip -y
+        shell: powershell
+      - name: Install target for Windows
+        shell: bash
+        run: |
+          for arch in x86_64 aarch64; do
+            rustup target add $arch-pc-windows-msvc
+          done
+      - name: Build for Windows
+        shell: bash
+        run: |
+          for arch in x86_64 aarch64; do
+            cargo build -p quota-watch --release --target $arch-pc-windows-msvc
+          done
+      - name: Create release zip files
+        shell: bash
+        run: |
+          mkdir "${{ env.RELEASE_DIR }}"
+          for arch in x86_64 aarch64; do
+            zip -j "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-$arch-pc-windows-msvc.zip" target/$arch-pc-windows-msvc/release/quota-watch.exe
+          done
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-windows
+          path: ${{ env.RELEASE_DIR }}/*
+          retention-days: 1
+
+  create-release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: all-dist/
+          pattern: packages-*
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd all-dist
+          sha256sum -- * | sort -k2 > SHA256SUMS.txt
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.extract-version.outputs.tag }}
+          files: all-dist/*
+          generate_release_notes: true
+          # beta 版在 GitHub 上标记为 prerelease
+          prerelease: ${{ contains(needs.extract-version.outputs.tag, '-beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

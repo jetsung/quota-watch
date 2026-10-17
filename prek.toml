@@ -1,0 +1,31 @@
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-added-large-files" },
+  { id = "check-merge-conflict" },
+  { id = "check-toml" },
+  { id = "check-yaml" },
+  { id = "check-json" },
+  { id = "mixed-line-ending" },
+  { id = "check-case-conflict" },
+  { id = "detect-private-key" },
+]
+
+[[repos]]
+repo = "https://github.com/koalaman/shellcheck-precommit"
+rev = "v0.11.0"
+hooks = [
+  { id = "shellcheck" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "cargo-test", name = "cargo test", entry = "cargo test", language = "system", pass_filenames = false },
+    { id = "cargo-clippy", name = "cargo clippy", entry = "cargo clippy --all-targets -- -D warnings", language = "system", pass_filenames = false },
+    { id = "cargo-fmt", name = "cargo fmt", entry = "cargo fmt", language = "system", pass_filenames = false },
+    { id = "cargo-doc", name = "cargo doc", entry = "cargo doc --no-deps", language = "system", pass_filenames = false },
+    { id = "cargo-publish", name = "cargo publish", entry = "cargo publish --dry-run --registry crates-io --allow-dirty", language = "system", pass_filenames = false },
+]

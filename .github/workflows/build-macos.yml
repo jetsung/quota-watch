@@ -1,0 +1,55 @@
+name: Build macOS (artifact only)
+
+# 轻量 macOS 构建：仅手动触发，产出 x86_64 与 aarch64 可执行文件 tarball，
+# 不发布 release。用于按需获取 macOS 版本。
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '构建的分支（留空则使用默认分支）'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_DIR: dist
+
+jobs:
+  build-macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+      - name: Update Rust
+        run: |
+          rustup update
+          rustc --version
+      - name: Install targets for MacOS
+        run: |
+          for arch in x86_64 aarch64; do
+            rustup target add $arch-apple-darwin
+          done
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - name: Build for MacOS
+        run: |
+          for arch in x86_64 aarch64; do
+            cargo build -p quota-watch --release --target $arch-apple-darwin
+          done
+      - name: Create tarballs
+        run: |
+          VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          mkdir -p "${{ env.RELEASE_DIR }}"
+          for arch in x86_64 aarch64; do
+            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-${arch}-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
+          done
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: ${{ env.RELEASE_DIR }}/*
+          retention-days: 30

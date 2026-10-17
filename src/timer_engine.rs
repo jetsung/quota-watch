@@ -1,5 +1,7 @@
 use crate::models::{AppState, RuntimeFlags, ServiceEntry};
-use crate::notifications::{body_with_next_reset, title_first_alert, title_recurring, title_reset, NotificationService};
+use crate::notifications::{
+    NotificationService, body_with_next_reset, title_first_alert, title_recurring, title_reset,
+};
 use chrono::{DateTime, Utc};
 use gpui_kit::{App, Entity, Task};
 
@@ -34,7 +36,8 @@ pub fn decide(
         let interval_secs = (service.interval_hours * 3600.0).round() as i64;
         let elapsed = (now - service.last_reset_time).num_seconds().max(0);
         let periods = (elapsed / interval_secs).max(1);
-        let new_last_reset = service.last_reset_time + chrono::Duration::seconds(periods * interval_secs);
+        let new_last_reset =
+            service.last_reset_time + chrono::Duration::seconds(periods * interval_secs);
         return Decision::Reset { new_last_reset };
     }
 
@@ -64,12 +67,12 @@ pub fn decide(
         return Decision::Noop;
     }
     let interval_secs_b = service.secondary_reminder_interval_minutes as i64 * 60;
-    if let Some(last) = flags.last_alert_at {
-        if (now - last).num_seconds() >= interval_secs_b {
-            return Decision::Recurring {
-                minutes_left: (remaining_secs / 60).max(0) as u64,
-            };
-        }
+    if let Some(last) = flags.last_alert_at
+        && (now - last).num_seconds() >= interval_secs_b
+    {
+        return Decision::Recurring {
+            minutes_left: (remaining_secs / 60).max(0) as u64,
+        };
     }
     Decision::Noop
 }
@@ -111,7 +114,10 @@ pub fn run_tick(
             }
             state.runtime.insert(
                 entry.id,
-                RuntimeFlags { first_alert_sent: false, last_alert_at: None },
+                RuntimeFlags {
+                    first_alert_sent: false,
+                    last_alert_at: None,
+                },
             );
             out.reset_happened = true;
             // 重置通知：告知用户配额已重置并进入新周期。
@@ -123,8 +129,7 @@ pub fn run_tick(
                 let title = title_reset(&entry.service_name);
                 let body = body_with_next_reset(next_reset_after);
                 if notifier.notify(&title, &body).is_err() {
-                    out
-                        .error_messages
+                    out.error_messages
                         .push(format!("重置通知发送失败：{}", entry.service_name));
                 }
             }
@@ -135,28 +140,26 @@ pub fn run_tick(
     for (entry, decision) in &decisions {
         let (title, is_first) = match decision {
             Decision::FirstAlert { minutes_left } => (
-                title_first_alert(&entry.service_name, (*minutes_left).min(u32::MAX as u64) as u32),
+                title_first_alert(
+                    &entry.service_name,
+                    (*minutes_left).min(u32::MAX as u64) as u32,
+                ),
                 true,
             ),
-            Decision::Recurring { minutes_left } => (
-                title_recurring(&entry.service_name, *minutes_left),
-                false,
-            ),
+            Decision::Recurring { minutes_left } => {
+                (title_recurring(&entry.service_name, *minutes_left), false)
+            }
             _ => continue,
         };
         let next_reset = entry.next_reset_at();
         let body = body_with_next_reset(next_reset);
         let ok = notifier.notify(&title, &body).is_ok();
         if !ok {
-            out
-                .error_messages
+            out.error_messages
                 .push(format!("通知发送失败：{}", entry.service_name));
             continue;
         }
-        let flags = state
-            .runtime
-            .entry(entry.id)
-            .or_insert_with(RuntimeFlags::default);
+        let flags = state.runtime.entry(entry.id).or_default();
         if is_first {
             flags.first_alert_sent = true;
             flags.last_alert_at = Some(now);
@@ -216,7 +219,12 @@ mod tests {
     use chrono::TimeZone;
     use uuid::Uuid;
 
-    fn entry(interval_hours: f64, threshold_min: u32, secondary_min: u32, muted: bool) -> ServiceEntry {
+    fn entry(
+        interval_hours: f64,
+        threshold_min: u32,
+        secondary_min: u32,
+        muted: bool,
+    ) -> ServiceEntry {
         ServiceEntry {
             id: Uuid::new_v4(),
             service_name: "test".into(),
@@ -251,14 +259,20 @@ mod tests {
             Decision::FirstAlert { minutes_left: 30 }
         );
         // 已发送首次提醒后不再重复 A
-        let sent = RuntimeFlags { first_alert_sent: true, last_alert_at: Some(t(4, 30, 0)) };
+        let sent = RuntimeFlags {
+            first_alert_sent: true,
+            last_alert_at: Some(t(4, 30, 0)),
+        };
         assert_eq!(decide(&e, t(4, 31, 0), &sent, true), Decision::Noop);
     }
 
     #[test]
     fn recurring_after_secondary_interval() {
         let e = entry(5.0, 60, 5, false);
-        let sent = RuntimeFlags { first_alert_sent: true, last_alert_at: Some(t(4, 30, 0)) };
+        let sent = RuntimeFlags {
+            first_alert_sent: true,
+            last_alert_at: Some(t(4, 30, 0)),
+        };
         // 距上次提醒 5 分钟 → 触发 B
         assert_eq!(
             decide(&e, t(4, 35, 0), &sent, true),
@@ -277,7 +291,10 @@ mod tests {
             decide(&e, t(4, 30, 0), &flags, true),
             Decision::FirstAlert { minutes_left: 30 }
         );
-        let sent = RuntimeFlags { first_alert_sent: true, last_alert_at: Some(t(4, 30, 0)) };
+        let sent = RuntimeFlags {
+            first_alert_sent: true,
+            last_alert_at: Some(t(4, 30, 0)),
+        };
         // 静音抑制 B
         assert_eq!(decide(&e, t(4, 35, 0), &sent, true), Decision::Noop);
     }
@@ -320,19 +337,34 @@ mod tests {
         // tick1: 首次提醒
         let flags = RuntimeFlags::default();
         let now = t(4, 0, 0);
-        assert!(matches!(decide(&e, now, &flags, true), Decision::FirstAlert { .. }));
+        assert!(matches!(
+            decide(&e, now, &flags, true),
+            Decision::FirstAlert { .. }
+        ));
         // tick2 (4:04:59): A 已发送且距上次提醒不足 5 分钟 → 无 B
-        let flags2 = RuntimeFlags { first_alert_sent: true, last_alert_at: Some(now) };
+        let flags2 = RuntimeFlags {
+            first_alert_sent: true,
+            last_alert_at: Some(now),
+        };
         assert_eq!(decide(&e, t(4, 4, 59), &flags2, true), Decision::Noop);
         // tick3 (4:05:00): B 触发（二次间隔 5 分钟已到）
-        assert!(matches!(decide(&e, t(4, 5, 0), &flags2, true), Decision::Recurring { .. }));
+        assert!(matches!(
+            decide(&e, t(4, 5, 0), &flags2, true),
+            Decision::Recurring { .. }
+        ));
         // tick4: 重置 → flags 清除
         match decide(&e, t(5, 0, 0), &flags2, true) {
             Decision::Reset { new_last_reset } => {
                 let cleared = RuntimeFlags::default();
                 // 下一周期重新走 A
-                let e2 = ServiceEntry { last_reset_time: new_last_reset, ..e };
-                assert!(matches!(decide(&e2, t(9, 0, 0), &cleared, true), Decision::FirstAlert { .. }));
+                let e2 = ServiceEntry {
+                    last_reset_time: new_last_reset,
+                    ..e
+                };
+                assert!(matches!(
+                    decide(&e2, t(9, 0, 0), &cleared, true),
+                    Decision::FirstAlert { .. }
+                ));
             }
             other => panic!("expected Reset, got {:?}", other),
         }
@@ -443,10 +475,18 @@ mod tests {
         let mut state = state_with(entry(1.0, 30, 5, false), true);
 
         // A 触发但发送失败 → 错误消息，tick 不中断
-        let out = run_tick(&mut state, t0 + chrono::Duration::minutes(30), &FailingNotifier);
+        let out = run_tick(
+            &mut state,
+            t0 + chrono::Duration::minutes(30),
+            &FailingNotifier,
+        );
         assert_eq!(out.error_messages.len(), 1);
         // 失败未标记 first_alert_sent → 下一 tick 重试
-        let out = run_tick(&mut state, t0 + chrono::Duration::minutes(31), &FailingNotifier);
+        let out = run_tick(
+            &mut state,
+            t0 + chrono::Duration::minutes(31),
+            &FailingNotifier,
+        );
         assert_eq!(out.error_messages.len(), 1);
 
         // 通知恢复后（切换 notifier）周期继续正常
