@@ -52,16 +52,39 @@ jobs:
 
   build-linux:
     needs: [extract-version]
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-24.04
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - runs-on: ubuntu-24.04-arm
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v7
         with:
-            ref: ${{ needs.extract-version.outputs.tag }}
-            submodules: true
+          ref: ${{ needs.extract-version.outputs.tag }}
+          submodules: true
+      - name: Install system dependencies
+        # GPUI Linux 依赖：zed-font-kit/freetype-sys 构建脚本经 pkg-config 查找
+        # fontconfig/freetype2；xkbcommon 以 #[link] 链接，需要开发符号链接
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
       - name: Update Rust
         run: |
           rustup update
           rustc --version
+      - name: Install target for Linux
+        run: rustup target add ${{ matrix.target }}
       - name: Cache cargo
         uses: actions/cache@v5
         with:
@@ -70,21 +93,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-linux-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-linux-
-      - uses: jetsung/setup-zig@v1
-        with:
-          version: "0.16.0"
-      - name: Check zig version
-        run: |
-          zig version
-      - name: Install target for Linux
-        run: |
-          for arch in x86_64 aarch64 loongarch64; do
-            rustup target add $arch-unknown-linux-gnu
-          done
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild
+          key: cargo-linux-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-linux-${{ matrix.arch }}-
       - name: Install cargo-deb and cargo-generate-rpm
         run: |
           cargo install cargo-deb
@@ -93,31 +103,25 @@ jobs:
         run: |
           # GUI 应用依赖系统 wayland/x11/GPU 库，只构建 gnu（glibc）二进制，
           # musl 静态链接对 GUI 无意义
-          for arch in x86_64 aarch64 loongarch64; do
-            cargo-zigbuild zigbuild -p quota-watch --release --target $arch-unknown-linux-gnu
-          done
+          cargo build -p quota-watch --release --target ${{ matrix.target }}
       - name: Package .deb, .rpm and tarball
         run: |
-          mkdir ${{ env.RELEASE_DIR }}
-          for arch in x86_64 aarch64 loongarch64; do
-            # .deb (gnu)
-            # --no-strip: the cross binary is built by cargo-zigbuild; the host
-            # `strip` cannot recognise aarch64/loongarch64 binaries, so skip it.
-            cargo deb --target $arch-unknown-linux-gnu --no-build --no-strip
-            mv target/$arch-unknown-linux-gnu/debian/*.deb ${{ env.RELEASE_DIR }}/
+          mkdir -p "${{ env.RELEASE_DIR }}"
+          # .deb (gnu)
+          cargo deb --target ${{ matrix.target }} --no-build --no-strip
+          mv target/${{ matrix.target }}/debian/*.deb ${{ env.RELEASE_DIR }}/
 
-            # .rpm (gnu) — cargo-generate-rpm emits the .rpm under
-            # target/$arch-unknown-linux-gnu/generate-rpm/, so locate it with find
-            cargo generate-rpm --target $arch-unknown-linux-gnu
-            mv target/$arch-unknown-linux-gnu/generate-rpm/*.rpm ${{ env.RELEASE_DIR }}/
+          # .rpm (gnu) — cargo-generate-rpm emits the .rpm under
+          # target/$arch-unknown-linux-gnu/generate-rpm/, so locate it with find
+          cargo generate-rpm --target ${{ matrix.target }}
+          mv target/${{ matrix.target }}/generate-rpm/*.rpm ${{ env.RELEASE_DIR }}/
 
-            # tarball (gnu)
-            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-$arch-unknown-linux-gnu.tar.xz" -C target/$arch-unknown-linux-gnu/release quota-watch
-          done
+          # tarball (gnu)
+          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-${{ matrix.target }}.tar.xz" -C target/${{ matrix.target }}/release quota-watch
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: packages-linux
+          name: packages-linux-${{ matrix.arch }}
           path: ${{ env.RELEASE_DIR }}/*
           retention-days: 1
 
