@@ -158,6 +158,9 @@ fn restore_and_activate(win: &mut gpui_kit::Window) {
             }
         }
     }
+    // Windows：从托盘恢复时重新显示任务栏按钮（与"关闭"时 hide_taskbar 对应）
+    #[cfg(target_os = "windows")]
+    crate::win32::show_taskbar(win);
     win.activate_window();
     win.request_attention();
 }

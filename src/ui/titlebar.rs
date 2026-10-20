@@ -24,6 +24,11 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
         .on_mouse_down(MouseButton::Left, |event, window, _| {
             // 双击空白区不触发最大化（窗口固定尺寸），仅拖动。
             if event.click_count <= 1 {
+                // Windows 下 gpui 的 start_window_move 无平台实现，走 Win32 兜底
+                // （最大化时先还原再拖动，见 win32::start_drag）；其他平台沿用系统拖动。
+                #[cfg(target_os = "windows")]
+                crate::win32::start_drag(window);
+                #[cfg(not(target_os = "windows"))]
                 window.start_window_move();
             }
         })
@@ -73,7 +78,14 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                         }))
                         .tooltip(if maximized { "还原" } else { "最大化" })
                         .accessibility_label(if maximized { "还原" } else { "最大化" })
-                        .on_click(|_, window, _| window.zoom_window()),
+                        // Windows 下 gpui 的 zoom 仅最大化、无还原路径，走 Win32 兜底
+                        // （SW_MAXIMIZE / SW_RESTORE 显式分支）；其他平台沿用 zoom 的 toggle 语义。
+                        .on_click(|_, window, _| {
+                            #[cfg(target_os = "windows")]
+                            crate::win32::toggle_maximize(window);
+                            #[cfg(not(target_os = "windows"))]
+                            window.zoom_window();
+                        }),
                 )
                 // 关闭：等同"最小化到托盘"，与 on_window_should_close 拦截一致；
                 // 同时从 KWin 任务栏隐藏（托盘激活后恢复）
@@ -86,6 +98,10 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                         .custom(ButtonCustomVariant::new(cx).hover(theme.danger.opacity(0.15)))
                         .on_click(|_, window, _| {
                             window.minimize_window();
+                            // 关闭语义 = 最小化到托盘，同时隐藏任务栏按钮（对齐 Linux skipTaskbar）
+                            #[cfg(target_os = "windows")]
+                            crate::win32::hide_taskbar(window);
+                            #[cfg(target_os = "linux")]
                             std::thread::spawn(crate::kwin::hide_via_kwin);
                         }),
                 ),

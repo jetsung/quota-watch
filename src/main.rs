@@ -1,4 +1,12 @@
+// Release 构建为 GUI 子系统，双击启动不弹 Console；debug（cargo run）保留控制台便于排障。
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 mod kwin;
+#[cfg(target_os = "windows")]
+mod win32;
 mod models;
 mod notifications;
 mod persistence;
@@ -14,6 +22,9 @@ fn main() {
     // --version / -V：打印版本号后退出，不启动 GUI（供命令行 / 包管理器核对）。
     let mut cli_args = std::env::args();
     if cli_args.next().is_some() && cli_args.any(|a| a == "--version" || a == "-V") {
+        // Release（GUI 子系统）无控制台：附加父进程控制台后打印；失败（如双击）静默。
+        #[cfg(all(target_os = "windows", not(debug_assertions)))]
+        win32::attach_parent_console();
         println!("quota-watch {}", env!("CARGO_PKG_VERSION"));
         return;
     }
@@ -35,6 +46,14 @@ fn main() {
         // 自绘标题栏（Client 装饰）：移除系统标题栏，三键由软件绘制。
         let (handle, _root) = gpui_kit::open_window(
             gpui_kit::WindowOptions {
+                // Windows：主显示器工作区居中（gpui 的 centered 取 work area，避开任务栏、DPI 归一）；
+                // 其他平台保持原有 (0,0) 行为不变。
+                #[cfg(target_os = "windows")]
+                window_bounds: Some(gpui_kit::WindowBounds::centered(
+                    gpui_kit::size(gpui_kit::px(400.), gpui_kit::px(720.)),
+                    cx,
+                )),
+                #[cfg(not(target_os = "windows"))]
                 window_bounds: Some(gpui_kit::WindowBounds::Windowed(gpui_kit::Bounds {
                     origin: Default::default(),
                     size: gpui_kit::size(gpui_kit::px(400.), gpui_kit::px(720.)),
@@ -51,6 +70,9 @@ fn main() {
             },
             cx,
             |window, cx| {
+                // Windows：任务栏按钮图标 = 应用图标（gpui 的 WindowOptions.icon 仅 X11 生效）
+                #[cfg(target_os = "windows")]
+                crate::win32::set_window_icon(window);
                 // 跟踪窗口可见性（最小化/恢复、关闭拦截等所有来源统一更新）
                 let flag = window_visible.clone();
                 window

@@ -21,6 +21,17 @@ anyhow = "1.0.104"
 tray-icon = { version = "0.26.1", default-features = false, features = ["ksni", "muda-snapshot"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6.2"
+# 最小特性：仅覆盖 win32.rs 用到的窗口/控制台 API（最大化还原、标题栏拖动、--version 附加控制台）
+windows = { version = "0.58.0", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Console",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6.2"
 x11rb = "0.14.0"
