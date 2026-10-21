@@ -2,7 +2,7 @@ use gpui_kit::base::h_flex;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, ElementId, FontWeight, IntoElement, ParentElement, Styled, Window, div, px, white,
+    App, ElementId, FontWeight, IntoElement, ParentElement, Pixels, Styled, Window, div, px, white,
 };
 
 /// 自定义勾选框：勾选时显示“✓”字符（gpui-kit 的 Checkbox 组件勾选图标为硬编码
@@ -14,6 +14,7 @@ pub fn render_checkbox(
     label: &str,
     checked: bool,
     on_change: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    text_size: Option<Pixels>,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme().clone();
@@ -47,6 +48,7 @@ pub fn render_checkbox(
             div()
                 .font_weight(FontWeight::BOLD)
                 .text_color(theme.foreground)
+                .when_some(text_size, |el, size| el.text_size(size))
                 .child(label),
         )
 }

@@ -13,6 +13,11 @@ target_dir := ```cargo metadata --no-deps --format-version 1 2>/dev/null | grep 
 dev:
     cargo run
 
+# 编译 release 版本并运行（与 dev 流程类似；xfce 下 WM 交互行为需以 release 产物验证）
+[group('build')]
+run-release:
+    cargo build --release && "{{target_dir}}/release/quota-watch"
+
 # 编译 release 版本
 [group('build')]
 build:

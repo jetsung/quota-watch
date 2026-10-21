@@ -25,6 +25,7 @@ pub fn render_footer(
             "启用桌面通知",
             global_enabled,
             on_toggle_global,
+            None,
             cx,
         ))
         .child(

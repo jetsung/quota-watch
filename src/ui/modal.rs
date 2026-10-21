@@ -9,12 +9,15 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, Focusable as _, IntoElement, ParentElement, Render,
-    SharedString, Window, div, px,
+    App, ClickEvent, Context, Entity, Focusable as _, FontWeight, IntoElement, ParentElement,
+    Render, SharedString, Window, div, px,
 };
 use uuid::Uuid;
 
 const LAST_RESET_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// 保存成功 Toast 的 id 标记：用于应用侧定时提前移除（库内自动关闭写死 5s）。
+struct SaveTip;
 
 /// Add/Edit 共用的表单视图。
 /// 字段：service_name / interval_hours /（NextReset 或 Countdown 模式的重置时间输入）/
@@ -376,7 +379,32 @@ impl AddEditView {
             } else {
                 "已添加服务"
             };
-            window.push_notification(Notification::success(msg), cx);
+            // 背景：比"正常"徽章绿色（#088f4e）更浅的绿；文字黑色加粗
+            let green_bg: gpui_kit::Hsla = gpui_kit::rgb(0x3cb371).into();
+            let black_fg: gpui_kit::Hsla = gpui_kit::rgb(0x000000).into();
+            window.push_notification(
+                Notification::success(msg)
+                    .text_center()
+                    .bg(green_bg)
+                    .text_color(black_fg)
+                    .font_weight(FontWeight::BOLD)
+                    .id::<SaveTip>(),
+                cx,
+            );
+            // 库内 Toast 自动关闭写死 5s，这里应用侧 2s 定时提前移除
+            let tip_handle = handle;
+            cx.spawn(async move |_, async_cx| {
+                async_cx
+                    .background_executor()
+                    .timer(std::time::Duration::from_secs(2))
+                    .await;
+                async_cx.update(|cx| {
+                    tip_handle
+                        .update(cx, |_, win, app| win.remove_notification::<SaveTip>(app))
+                        .ok();
+                });
+            })
+            .detach();
             window.close_all_dialogs(cx);
         }
     }
@@ -391,8 +419,8 @@ impl Render for AddEditView {
             .items_center()
             .child(
                 div()
-                    .text_size(px(15.))
-                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .text_size(px(17.))
+                    .font_weight(gpui_kit::FontWeight::BOLD)
                     .text_color(theme.foreground)
                     .child(self.title.clone()),
             )
@@ -505,6 +533,7 @@ impl Render for AddEditView {
                     this.muted = *checked;
                     cx.notify();
                 }),
+                None,
                 cx,
             ))
             .when_some(self.error.clone(), |el, err| {

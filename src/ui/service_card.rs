@@ -100,7 +100,7 @@ pub fn render_service_card(
                 // id 前置使两分支同为 Stateful<Div>；配置了 URL 的条目标题可点击，在系统浏览器打开
                 let title = div()
                     .id(format!("title-{}", id))
-                    .text_size(px(16.))
+                    .text_size(px(18.))
                     .font_weight(gpui_kit::FontWeight::BOLD)
                     .child(entry.service_name.clone());
                 match entry.url.clone() {
@@ -147,6 +147,7 @@ pub fn render_service_card(
                     let f = actions.on_toggle_mute;
                     move |c: &bool, w: &mut Window, a: &mut App| f(c, w, a)
                 },
+                Some(px(13.)),
                 cx,
             ))
             .child(
