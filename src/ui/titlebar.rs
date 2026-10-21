@@ -24,6 +24,11 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
         .on_mouse_down(MouseButton::Left, |event, window, _| {
             // 双击空白区不触发最大化（窗口固定尺寸），仅拖动。
             if event.click_count <= 1 {
+                // Windows 下 gpui 的 start_window_move 无平台实现，走 Win32 兜底
+                // （最大化时先还原再拖动，见 win32::start_drag）；其他平台沿用系统拖动。
+                #[cfg(target_os = "windows")]
+                crate::win32::start_drag(window);
+                #[cfg(not(target_os = "windows"))]
                 window.start_window_move();
             }
         })
@@ -73,7 +78,15 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                         }))
                         .tooltip(if maximized { "还原" } else { "最大化" })
                         .accessibility_label(if maximized { "还原" } else { "最大化" })
-                        .on_click(|_, window, _| crate::window_control::toggle_maximize(window)),
+                        // Windows 下 gpui 的 zoom 仅最大化、无还原路径，走 Win32 兜底
+                        // （SW_MAXIMIZE / SW_RESTORE 显式分支）；其他平台走 window_control
+                        // 的显式 EWMH 状态切换（规避 xfwm4 的 Toggle 缓存失同步）。
+                        .on_click(|_, window, _| {
+                            #[cfg(target_os = "windows")]
+                            crate::win32::toggle_maximize(window);
+                            #[cfg(not(target_os = "windows"))]
+                            crate::window_control::toggle_maximize(window);
+                        }),
                 )
                 // 关闭：等同"最小化到托盘"，与 on_window_should_close 拦截一致
                 .child(
@@ -83,7 +96,9 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                         .tooltip("关闭")
                         .accessibility_label("关闭")
                         .custom(ButtonCustomVariant::new(cx).hover(theme.danger.opacity(0.15)))
-                        .on_click(|_, window, _| crate::window_control::hide_to_tray(window)),
+                        .on_click(|_, window, _| {
+                            crate::window_control::hide_to_tray(window);
+                        }),
                 ),
         )
 }

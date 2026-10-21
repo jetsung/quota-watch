@@ -34,8 +34,11 @@ fn load_icon() -> Icon {
     Icon::from_rgba(img.into_raw(), w, h).expect("托盘图标 RGBA 数据无效")
 }
 fn restore_and_activate(win: &mut gpui_kit::Window) {
-    // X11/EWMH 与 KWin 逻辑统一在 window_control 中（KWin 优先、X11 回退）
+    // X11/EWMH 与 KWin 逻辑统一在 window_control 中（KWin 优先、X11 回退；
+    // Windows 的任务栏按钮显隐也在 restore_from_tray / hide_to_tray 内处理）
     crate::window_control::restore_from_tray(win);
+    win.activate_window();
+    win.request_attention();
 }
 
 /// 创建系统托盘并启动事件轮询 task。

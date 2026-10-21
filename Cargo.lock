@@ -5263,6 +5263,7 @@ dependencies = [
  "uuid",
  "wayland-client",
  "wayland-protocols",
+ "windows 0.58.0",
  "x11rb 0.14.0",
 ]
 

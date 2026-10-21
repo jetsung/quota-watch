@@ -12,6 +12,9 @@ use gpui_kit::Window;
 /// 隐藏到托盘：最小化窗口并从任务栏隐藏图标（进程与托盘常驻）。
 pub fn hide_to_tray(window: &Window) {
     window.minimize_window();
+    // Windows：对齐 Linux skipTaskbar 语义，关闭/隐藏时隐藏任务栏按钮
+    #[cfg(target_os = "windows")]
+    crate::win32::hide_taskbar(window);
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
     {
         if crate::kwin::hide_via_kwin() {
@@ -156,6 +159,9 @@ fn net_wm_state_has_atom(window_id: u32, atom_name: &[u8]) -> bool {
 
 /// 从托盘恢复：取消最小化、清除任务栏隐藏、置顶激活。
 pub fn restore_from_tray(window: &Window) {
+    // Windows：恢复时重新显示任务栏按钮（与 hide_to_tray 的 hide_taskbar 对应）
+    #[cfg(target_os = "windows")]
+    crate::win32::show_taskbar(window);
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
     {
         if crate::kwin::activate_via_kwin() {

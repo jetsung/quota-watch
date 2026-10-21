@@ -39,6 +39,16 @@ jobs:
       - name: Build for Windows (x86_64)
         shell: bash
         run: cargo build -p quota-watch --release --target x86_64-pc-windows-msvc
+      - name: Assert GUI subsystem (no console)
+        # release 产物必须是 Windows GUI 子系统（PE Subsystem == 2），否则双击会弹 Console。
+        # 读 PE 头：e_lfanew(偏移60) → OptionalHeader(PE32+ 偏移68 处为 Subsystem)。
+        shell: powershell
+        run: |
+          $b = [IO.File]::ReadAllBytes('target/x86_64-pc-windows-msvc/release/quota-watch.exe')
+          $pe = [BitConverter]::ToInt32($b, 60)
+          $sub = [BitConverter]::ToUInt16($b, $pe + 24 + 68)
+          if ($sub -ne 2) { throw "quota-watch.exe Subsystem 期望 2 (Windows GUI)，实际 $sub — release 会弹 Console" }
+          Write-Host "Subsystem OK: Windows GUI (2)"
       - name: Create release zip
         shell: bash
         run: |
