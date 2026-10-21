@@ -73,10 +73,9 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                         }))
                         .tooltip(if maximized { "还原" } else { "最大化" })
                         .accessibility_label(if maximized { "还原" } else { "最大化" })
-                        .on_click(|_, window, _| window.zoom_window()),
+                        .on_click(|_, window, _| crate::window_control::toggle_maximize(window)),
                 )
-                // 关闭：等同"最小化到托盘"，与 on_window_should_close 拦截一致；
-                // 同时从 KWin 任务栏隐藏（托盘激活后恢复）
+                // 关闭：等同"最小化到托盘"，与 on_window_should_close 拦截一致
                 .child(
                     Button::new("titlebar-close")
                         .ghost()
@@ -84,10 +83,7 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                         .tooltip("关闭")
                         .accessibility_label("关闭")
                         .custom(ButtonCustomVariant::new(cx).hover(theme.danger.opacity(0.15)))
-                        .on_click(|_, window, _| {
-                            window.minimize_window();
-                            std::thread::spawn(crate::kwin::hide_via_kwin);
-                        }),
+                        .on_click(|_, window, _| crate::window_control::hide_to_tray(window)),
                 ),
         )
 }

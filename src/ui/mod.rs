@@ -27,11 +27,10 @@ pub struct RootView {
 
 impl RootView {
     pub fn new(state: Entity<AppState>, window: &mut Window, cx: &App) -> Self {
-        // 拦截窗口关闭：返回 false 阻止关闭，改为最小化，保持托盘常驻；
-        // 与标题栏"关闭"一致，从 KWin 任务栏隐藏（托盘激活后恢复）。
+        // 拦截窗口关闭：返回 false 阻止关闭，改为"最小化到托盘"（KWin 优先、
+        // X11/EWMH 回退隐藏任务栏图标），与标题栏"关闭"一致。
         window.on_window_should_close(cx, |window, _cx| {
-            window.minimize_window();
-            std::thread::spawn(crate::kwin::hide_via_kwin);
+            crate::window_control::hide_to_tray(window);
             false
         });
         // gpui-fast X11 后端会在 GPU 初始化完成（异步）后写入自己的

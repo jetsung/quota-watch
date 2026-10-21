@@ -34,132 +34,8 @@ fn load_icon() -> Icon {
     Icon::from_rgba(img.into_raw(), w, h).expect("托盘图标 RGBA 数据无效")
 }
 fn restore_and_activate(win: &mut gpui_kit::Window) {
-    #[cfg(all(target_os = "linux", not(target_os = "android")))]
-    {
-        use raw_window_handle::HasWindowHandle as _;
-        use x11rb::connection::Connection as _;
-        use x11rb::protocol::xproto::ConnectionExt as _;
-        if let Ok(handle) = win.window_handle() {
-            use raw_window_handle::RawWindowHandle;
-            match handle.as_raw() {
-                RawWindowHandle::Xlib(h) => {
-                    let window_id: u32 = h.window as u32;
-                    if window_id != 0
-                        && let Ok((conn, screen)) = x11rb::connect(None)
-                    {
-                        let root = conn.setup().roots.get(screen).map(|r| r.root).unwrap_or(0);
-                        let wm_state = conn
-                            .intern_atom(false, b"WM_STATE")
-                            .ok()
-                            .and_then(|c| c.reply().ok())
-                            .map(|r| r.atom)
-                            .unwrap_or(0);
-                        if wm_state != 0 {
-                            let _ = x11rb::wrapper::ConnectionExt::change_property32(
-                                &conn,
-                                x11rb::protocol::xproto::PropMode::REPLACE,
-                                window_id,
-                                wm_state,
-                                x11rb::protocol::xproto::AtomEnum::ATOM,
-                                &[1u32, 0u32],
-                            );
-                            let _ = x11rb::protocol::xproto::map_window(&conn, window_id);
-                            // 置顶到所有窗口之上（XRaiseWindow 等价）
-                            let _ = x11rb::protocol::xproto::configure_window(
-                                &conn,
-                                window_id,
-                                &x11rb::protocol::xproto::ConfigureWindowAux::new()
-                                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
-                            );
-                            let _ = conn.flush();
-                        }
-                        if let Some(reply) = conn
-                            .intern_atom(false, b"WM_CHANGE_STATE")
-                            .ok()
-                            .and_then(|c| c.reply().ok())
-                            .map(|r| r.atom)
-                        {
-                            let data: [u32; 5] = [1, 0, 0, 0, 0];
-                            let event = x11rb::protocol::xproto::ClientMessageEvent::new(
-                                32,
-                                window_id,
-                                reply,
-                                x11rb::protocol::xproto::ClientMessageData::from(data),
-                            );
-                            let _ = x11rb::protocol::xproto::send_event(
-                                &conn,
-                                false,
-                                root,
-                                x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_REDIRECT
-                                    | x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                                event,
-                            );
-                            let _ = conn.flush();
-                        }
-                    }
-                }
-                RawWindowHandle::Xcb(h) => {
-                    let window_id: u32 = h.window.get();
-                    if window_id != 0
-                        && let Ok((conn, screen)) = x11rb::connect(None)
-                    {
-                        let root = conn.setup().roots.get(screen).map(|r| r.root).unwrap_or(0);
-                        let wm_state = conn
-                            .intern_atom(false, b"WM_STATE")
-                            .ok()
-                            .and_then(|c| c.reply().ok())
-                            .map(|r| r.atom)
-                            .unwrap_or(0);
-                        if wm_state != 0 {
-                            let _ = x11rb::wrapper::ConnectionExt::change_property32(
-                                &conn,
-                                x11rb::protocol::xproto::PropMode::REPLACE,
-                                window_id,
-                                wm_state,
-                                x11rb::protocol::xproto::AtomEnum::ATOM,
-                                &[1u32, 0u32],
-                            );
-                            let _ = x11rb::protocol::xproto::map_window(&conn, window_id);
-                            // 置顶到所有窗口之上（XRaiseWindow 等价）
-                            let _ = x11rb::protocol::xproto::configure_window(
-                                &conn,
-                                window_id,
-                                &x11rb::protocol::xproto::ConfigureWindowAux::new()
-                                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
-                            );
-                            let _ = conn.flush();
-                        }
-                        if let Some(reply) = conn
-                            .intern_atom(false, b"WM_CHANGE_STATE")
-                            .ok()
-                            .and_then(|c| c.reply().ok())
-                            .map(|r| r.atom)
-                        {
-                            let data: [u32; 5] = [1, 0, 0, 0, 0];
-                            let event = x11rb::protocol::xproto::ClientMessageEvent::new(
-                                32,
-                                window_id,
-                                reply,
-                                x11rb::protocol::xproto::ClientMessageData::from(data),
-                            );
-                            let _ = x11rb::protocol::xproto::send_event(
-                                &conn,
-                                false,
-                                root,
-                                x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_REDIRECT
-                                    | x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_NOTIFY,
-                                event,
-                            );
-                            let _ = conn.flush();
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    win.activate_window();
-    win.request_attention();
+    // X11/EWMH 与 KWin 逻辑统一在 window_control 中（KWin 优先、X11 回退）
+    crate::window_control::restore_from_tray(win);
 }
 
 /// 创建系统托盘并启动事件轮询 task。
@@ -200,7 +76,6 @@ pub fn spawn_tray(cx: &mut App, window: AnyWindowHandle, visible: Arc<AtomicBool
                         restore_and_activate(win);
                         app.activate(true);
                     });
-                    crate::kwin::activate_via_kwin();
                     visible.store(true, Ordering::Relaxed);
                 }
             }
@@ -209,17 +84,17 @@ pub fn spawn_tray(cx: &mut App, window: AnyWindowHandle, visible: Arc<AtomicBool
             while let Ok(event) = MenuEvent::receiver().try_recv() {
                 match event.id.0.as_str() {
                     MENU_TOGGLE => {
-                        // 可见 → 隐藏（最小化）；隐藏/最小化 → 恢复、置顶并激活
+                        // 可见 → 隐藏（最小化到托盘，语义与关闭一致）；
+                        // 隐藏/最小化 → 恢复、置顶并激活
                         if visible.load(Ordering::Relaxed) {
-                            let _ = window.update(cx, |_, win, _| win.minimize_window());
+                            let _ = window
+                                .update(cx, |_, win, _| crate::window_control::hide_to_tray(win));
                             visible.store(false, Ordering::Relaxed);
                         } else {
                             let _ = window.update(cx, |_, win, app| {
                                 restore_and_activate(win);
                                 app.activate(true);
                             });
-                            // Wayland 下 gpui 自身的激活不可靠，走 KWin 脚本恢复+置顶
-                            crate::kwin::activate_via_kwin();
                             visible.store(true, Ordering::Relaxed);
                         }
                     }

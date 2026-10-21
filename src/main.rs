@@ -4,6 +4,7 @@ mod notifications;
 mod persistence;
 mod timer_engine;
 mod tray;
+mod window_control;
 
 mod ui;
 
