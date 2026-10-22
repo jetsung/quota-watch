@@ -70,6 +70,10 @@ impl RootView {
             seq,
             message: message.into(),
             exiting: false,
+            action_upgrade: false,
+            action_restart: false,
+            action_cancel: false,
+            persistent: false,
         });
         cx.notify();
         cx.spawn(async move |this, async_cx| {
@@ -80,8 +84,11 @@ impl RootView {
             let _ = async_cx.update(|cx| {
                 this.update(cx, |view, cx| {
                     if view.toast.as_ref().map(|toast| toast.seq) == Some(seq) {
-                        view.toast.as_mut().unwrap().exiting = true;
-                        cx.notify();
+                        let persistent = view.toast.as_ref().unwrap().persistent;
+                        if !persistent {
+                            view.toast.as_mut().unwrap().exiting = true;
+                            cx.notify();
+                        }
                     }
                 })
             });
@@ -92,8 +99,11 @@ impl RootView {
             let _ = async_cx.update(|cx| {
                 this.update(cx, |view, cx| {
                     if view.toast.as_ref().map(|toast| toast.seq) == Some(seq) {
-                        view.toast = None;
-                        cx.notify();
+                        let persistent = view.toast.as_ref().unwrap().persistent;
+                        if !persistent {
+                            view.toast = None;
+                            cx.notify();
+                        }
                     }
                 })
             });
@@ -158,7 +168,11 @@ impl RootView {
             if initial_focus.replace(false) {
                 view.read(cx).name_focus_handle(cx).focus(window, cx);
             }
-            dialog.overlay(true).close_button(false).child(view.clone())
+            dialog
+                .overlay(true)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(view.clone())
         });
     }
 
@@ -167,7 +181,12 @@ impl RootView {
         let state = self.state.clone();
         let view = cx.new(|cx| SettingsView::new(window, cx, state));
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.overlay(true).close_button(false).child(view.clone())
+            // overlay_closable(false)：点击遮罩/主窗体不关闭，仅可通过面板上的“关闭”按钮退出
+            dialog
+                .overlay(true)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(view.clone())
         });
     }
 
@@ -211,6 +230,8 @@ impl RootView {
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = (*self.state.read(cx)).clone();
+        // 设置/新增编辑等对话框打开时，用遮罩盖住主窗体，避免误点下层元素
+        let has_active_dialog = gpui_kit::component::WindowExt::has_active_dialog(window, cx);
         let state_ent = self.state.clone();
 
         // ServiceList（6.3 / 6.4）：每个 id 构造 CardActions
@@ -309,8 +330,22 @@ impl Render for RootView {
             .child(list)
             .child(footer)
             .child(statusbar::render_statusbar(cx))
+            .when(has_active_dialog, |el| {
+                el.child(
+                    gpui_kit::div()
+                        .id("dialog-scrim")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .bg(gpui_kit::hsla(0., 0., 0., 0.18))
+                        .occlude()
+                        .on_click(|_: &gpui_kit::ClickEvent, _, _| {}),
+                )
+            })
             .when_some(toast_state, |el, state| {
-                el.child(toast::toast_overlay(&state))
+                el.child(toast::toast_overlay(&state, None))
             })
     }
 }

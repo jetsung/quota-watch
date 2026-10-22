@@ -11,8 +11,7 @@ src/
 ├── persistence.rs    # 配置加载（损坏自动备份、旧文件名迁移）与原子保存
 ├── timer_engine.rs   # 1s tick：决策引擎（C→A→B）与标志位管理
 ├── notifications.rs  # 通知服务抽象（notify-rust）与文案
-├── webdav.rs         # WebDAV 云端备份客户端（PROPFIND/GET/PUT/DELETE + MKCOL 建目录 + 密码加密/解密）
-├── update.rs         # GitHub Releases 版本检查与仓库/反馈链接常量
+├── update.rs         # GitHub Releases 版本检查、资产匹配、自升级（version/self-update 子命令 + UI 升级入口）
 ├── tray.rs           # 系统托盘（KSNI）与窗口激活/隐藏
 ├── window_control.rs # 跨后端窗口控制：隐藏到托盘 / 恢复 / 最大化（KWin 优先，X11/EWMH 回退）
 ├── kwin.rs           # KWin D-Bus 脚本窗口控制（Wayland）
@@ -21,7 +20,7 @@ src/
     ├── mod.rs        # RootView：布局组合、对话框、删除确认、设置入口、窗口关闭拦截
     ├── titlebar.rs   # 自绘标题栏、窗口控制键与设置按钮
     ├── service_list.rs / service_card.rs  # 服务列表（响应式分列）与卡片
-    ├── footer.rs     # 全局通知开关 + 新建服务
+    ├── footer.rs     # 新建服务按钮（全局通知开关已迁至设置面板）
     ├── statusbar.rs  # 版本号 + 版权信息
     ├── modal.rs      # Add/Edit 表单（模式切换、回车保存）
     ├── settings.rs   # 设置对话框（桌面通知 / 备份与恢复 / 导入与导出 / 关于）
@@ -31,8 +30,10 @@ src/
 
 ## 2. 命令行接口
 
-- `--version` / `-V`：打印 `quota-watch <版本号>` 后退出，不启动 GUI（供包管理器核对）。
-- 其他情况：正常启动 GUI。
+- `version`：打印 `quota-watch <版本号>` 后退出，不启动 GUI（供包管理器核对）。Windows Release（GUI 子系统）无控制台时自动附加父进程控制台（`win32::attach_parent_console`）。
+- `self-update`：检查 GitHub Releases 最新版本，新版本时下载当前平台资产、解压并原子替换当前可执行文件，打印"升级成功，重启应用后生效"后退出。进度以 `\r` 原地刷新（下载百分比 → 解压 → 替换）。
+- `help`：打印用法说明后退出。
+- 不带子命令（或未知参数）：正常启动 GUI。
 
 ## 3. 数据模型（models.rs）
 
@@ -222,17 +223,18 @@ src/
 - **备份与恢复**：
   - WebDAV 连接配置四字段：服务器地址、用户名、密码（**掩码输入框**，不回显明文）、远程目录；"保存连接配置"（粗体）+"测试"（small）按钮一行居中。**远程目录置空时保存/使用均回填默认值 `/quota-watch`**（项目专属子目录，避免与其它项目混在同一云端目录）。
   - "上传当前配置"（primary 整行）与"查看云端列表"（整行）两个操作按钮。
-  - 云端列表：条目紧凑排布（`px_2 py_1`、行距 `gap_1`），每条目显示文件名 + 修改时间，右侧"恢复""删除"两个 xsmall **无边框文字按钮**（ghost 样式）；空列表提示"云端无配置文件"**整行居中**（12px muted）。
+  - 云端列表：条目紧凑排布（`px_2 py_1`、行距 `gap_1`），每条目显示文件名 + 修改时间，右侧"恢复""删除"两个 **无边框文字按钮**（`xsmall` + `ghost` 样式，`10px` 字号；删除按钮带 `danger` 色调）；空列表提示"云端无配置文件"**整行居中**（12px muted）。
   - 恢复/删除均需居中确认框（标题"恢复云端配置/删除云端配置"，文件名描述用 12px 小字号防折行）。
   - **五类忙碌状态（测试/上传/列表/恢复/删除）一律以居中 Toast 提示框呈现进度与结果**（见 7.11），不在页面底部显示文字提示；操作期间对应按钮呈 loading 态并整体禁用相关操作，后台异步执行不阻塞 UI。
 - **导入与导出**：`rfd::FileDialog` 原生文件选择（JSON 过滤器）。导入解析 `PersistedState` 后弹居中确认框，确认即整体覆盖（服务列表、通知开关与 WebDAV 配置）并回填设置表单；导出文件名为带时间戳的 `quota-watch_<YYYYMMDD-HHMMSS>.json`，原子写入。
-- **关于**：居中堆叠布局——应用名（15px 粗体）→ 版本号 `v<当前版本>`（12px muted）→ "检查更新"按钮单独一行（胶囊圆角）→ 一行两个胶囊描边按钮"GitHub"与"问题反馈"（均带 `IconName::Github` 图标，分别 `open_url` 仓库主页与 issues/new）。图标渲染要求 `main.rs` 以 `with_assets(gpui_kit::assets::Assets)` 注册内嵌图标资源。
+- **关于**：居中堆叠布局——应用名（15px 粗体）→ 版本号 `v<当前版本>`（12px muted）→ "检查更新"按钮单独一行（胶囊圆角）→ 一行两个胶囊描边按钮"GitHub"与"问题反馈"（均带 `IconName::Github` 图标，分别 `open_url` 仓库主页与 issues/new）。图标渲染要求 `main.rs` 以 `with_assets(gpui_kit::assets::Assets)` 注册内嵌图标资源。**检查更新**发现新版本时 Toast 附加"立即升级"按钮，点击后后台执行与 `self-update` 子命令相同的升级流程（`update::self_update_with_progress`），Toast 转为**持久进度提示**（250ms 轮询刷新下载百分比 → 解压 → 替换文案），期间提供"取消"按钮中断下载（置位取消标志，后台在检查点中止，原文件不受影响）；升级成功 Toast 附加"立即重启"按钮，点击经 `setsid`（Windows 用 `DETACHED_PROCESS`）脱离当前进程组延迟拉起新实例后退出当前应用。
 
 ### 7.11 居中提示框 Toast（toast.rs）
 
 - 全屏居中遮罩（`toast_overlay`），带 `occlude()` 拦截下层点击——提示期间（约 2.25s）下层按钮点击可能被吞，属预期行为。
 - 动效：淡入 + 上浮进入，2s 停留后 0.25s 淡出移除（库内 Toast 自动关闭写死 5s，故用自定义两段定时）。
 - 主窗口与设置对话框共用（`BottomToast` trait / `show_toast`）；连续提示以序号（`toast_seq`）防旧任务误清新提示。
+- **升级流程 Toast 变体**（`ToastState` 的 `action_upgrade` / `action_cancel` / `action_restart` 标志位驱动）：发现新版本 → 持久 Toast + "立即升级"/"关闭"按钮；升级中 → 持久进度 Toast + "取消"按钮；升级成功 → 持久 Toast + "立即重启"/"关闭"按钮。持久 Toast 不自动关闭，由操作完成或用户关闭移除。
 
 ## 8. 系统托盘（tray.rs）
 
@@ -281,10 +283,14 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 
 ## 11. 更新检查（update.rs）
 
-- `check_latest()`：请求 GitHub Releases `latest` API，返回 `ReleaseInfo { version }`（去 `v` 前缀）。
-- `is_newer(latest, current)`：`version_key` 解析为 `(major, minor, patch)` 三级元组逐项比较——去 `v` 前缀、按 `.` 分段、每段取 `-`/`+` 之前的数字（非数字记 0）。**预发布后缀不参与比较**：`0.2.0-beta.1` 与 `0.2.0` 同键，beta 用户不会收到同版本其他预发布提醒，仅正式版本大于当前时才提示。
+- `check_latest()`：请求 GitHub Releases `latest` API，返回 `ReleaseInfo { version, assets }`（`version` 去 `v` 前缀；`assets` 为 `Vec<Asset { name, download_url }>`，对应 API 的 `assets` 数组项 `name` + `browser_download_url`）。调试时可设环境变量 `QUOTA_WATCH_RELEASES_API` 指向本地 Mock 服务器。
+- `is_newer(latest, current)`：**完整 semver 比较**。`version_key` 解析主版本段为 `(major, minor, patch)` 三级元组（去 `v` 前缀、按 `.` 分段、每段取 `-`/`+` 之前的数字，非数字记 0）；主版本段不同直接比较。**预发布段参与比较**：有预发布段（`-` 之后、`+` 之前）的版本小于同主版本段的正式版，预发布之间逐标识符比较（数字按数值、字母按字符串、数字 < 字母，标识符更多的一方更大）。如 `0.2.0-beta.2 > 0.2.0-beta.1`，`0.2.0 > 0.2.0-beta.1`，`0.3.0-alpha > 0.2.9`。
+- `select_platform_asset(assets)`：按编译期 `target_os` + `target_arch` 关键词匹配资产（文件名小写需同时包含 os 关键词——macOS 为 `darwin`——与 arch 关键词，且以平台压缩包格式结尾：Linux/macOS `.tar.xz`、Windows `.zip`），返回第一个匹配项；deb/rpm/SHA256SUMS 等非压缩包资产被扩展名过滤排除。
+- `self_update_with_progress(is_cancelled, on_progress)`：完整自升级流程——`check_latest()` → `is_newer()` 比较（已是最新返回 `UpdateOutcome::AlreadyUpToDate`）→ `select_platform_asset()` 匹配 → `reqwest::blocking` 下载到临时文件（600s 超时，64KB 分块读写，`Content-Length` 计算百分比）→ `extract_binary` 解压（tar.xz 取包内 `quota-watch`，zip 取 `.exe`）→ 暂存到 exe 同目录（跨文件系统 rename 会 EXDEV，先 copy 落地同文件系统）→ 设可执行权限（Unix `0o755`）→ 原子替换（Linux 直接 `rename` 覆盖运行中二进制；Windows 先 rename 旧文件为 `.old` 腾路径，失败回滚）。`is_cancelled` 在每个阶段边界轮询，返回 true 时以 `UpdateCancelled` 中止并清理临时文件。`on_progress` 回调报告 `UpdateProgress::Downloading` / `Extracting` / `Replacing`。
+- `current_exe_path()`：规范化当前可执行文件路径，剥离 Linux 升级替换后 `/proc/self/exe` 带的 ` (deleted)` 后缀。
+- `UpdateOutcome`：`AlreadyUpToDate`（已是最新） / `Updated`（已替换，重启后生效）。
 - 常量：`REPO_URL`（仓库主页）、`ISSUES_URL`（`issues/new` 问题反馈页）、`CURRENT_VERSION`（`CARGO_PKG_VERSION`）。
-- 设置页"关于"标签触发，结果（发现新版本 / 已最新 / 失败原因）以 Toast 呈现；自更新能力预留 `--self-update`，当前未实现。
+- CLI `self-update` 子命令调用 `self_update_with_progress`，进度以 `\r` 原地刷新；UI"关于"标签"检查更新"发现新版本时 Toast 附加"立即升级"按钮，触发同一升级流程（见 7.10）。
 
 ## 12. 测试规范
 
@@ -295,6 +301,9 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - 持久化 roundtrip、文件不存在返回默认、损坏文件备份分支、旧 `services.json` 一次性迁移为 `quota-watch.json`（测试通过临时目录 + 环境变量隔离，不读真实用户配置）。
 - `WebdavConfig` 序列化往返、WebDAV 客户端远程目录归一化。
 - 密码加密：密文 `enc:v1:` 前缀与 roundtrip（nonce 随机、不含明文）、历史明文透传、整份配置 `encrypt/decrypt_persisted` 往返、篡改密文拒绝、上传→下载→解密全链路集成测试。
+- 版本比较：`is_newer` 数值段比较、`version_key` 去 `v` 前缀/后缀、预发布段比较（beta.2 > beta.1、预发布 < 正式版、主版本段优先、标识符更多者更大）。
+- 资产匹配：`select_platform_asset` 当前平台匹配、无匹配返回 None、deb/rpm/SHA256SUMS 等非压缩包资产跳过。
+- 解压：`extract_binary` tar.xz 解包裸二进制成功、包内无可执行文件时失败。
 - 决策引擎单测（阈值外无动作、首次仅一次、周期间隔、静音抑制 B 不抑制 A、全局禁用抑制 A/B 不抑制 C、重置多周期对齐、完整周期 A→B→C）。
 - 集成测试（加载→tick→通知→重置滚动；静音/全局开关/通知失败不中断）。
 - 性能基准（60 服务 < 8ms/tick）。

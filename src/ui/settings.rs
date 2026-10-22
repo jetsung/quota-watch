@@ -80,6 +80,10 @@ pub struct SettingsView {
     /// None = 尚未拉取；Some(empty) = 云端无配置文件。
     remote_files: Option<Vec<RemoteFile>>,
     checking_update: bool,
+    /// 是否正在执行自升级（“立即升级”点击后到结果回调前）。
+    upgrading: bool,
+    /// 升级中的取消标志（“取消”按钮置位，后台下载在检查点中止）。
+    upgrade_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     error: Option<SharedString>,
     toast: Option<ToastState>,
     toast_seq: u64,
@@ -132,6 +136,8 @@ impl SettingsView {
             busy: None,
             remote_files: None,
             checking_update: false,
+            upgrading: false,
+            upgrade_cancel: None,
             error: None,
             toast: None,
             toast_seq: 0,
@@ -181,12 +187,37 @@ impl SettingsView {
     }
 
     fn show_toast(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.push_toast_internal(message, false, false, false, cx);
+    }
+
+    /// 显示带“立即升级”操作按钮的提示（检查更新发现新版本时），持久显示不自动关闭。
+    fn show_upgrade_toast(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.push_toast_internal(message, true, false, true, cx);
+    }
+
+    /// 升级成功后的持久提示，附“立即重启 / 稍后”按钮。
+    fn show_restart_toast(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.push_toast_internal(message, false, true, true, cx);
+    }
+
+    fn push_toast_internal(
+        &mut self,
+        message: impl Into<SharedString>,
+        action_upgrade: bool,
+        action_restart: bool,
+        persistent: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.toast_seq = self.toast_seq.wrapping_add(1);
         let seq = self.toast_seq;
         self.toast = Some(ToastState {
             seq,
             message: message.into(),
             exiting: false,
+            action_upgrade,
+            action_restart,
+            action_cancel: false,
+            persistent,
         });
         cx.notify();
         cx.spawn(async move |this, async_cx| {
@@ -197,8 +228,11 @@ impl SettingsView {
             let _ = async_cx.update(|cx| {
                 this.update(cx, |view, cx| {
                     if view.toast.as_ref().map(|toast| toast.seq) == Some(seq) {
-                        view.toast.as_mut().unwrap().exiting = true;
-                        cx.notify();
+                        let persistent = view.toast.as_ref().unwrap().persistent;
+                        if !persistent {
+                            view.toast.as_mut().unwrap().exiting = true;
+                            cx.notify();
+                        }
                     }
                 })
             });
@@ -209,8 +243,11 @@ impl SettingsView {
             let _ = async_cx.update(|cx| {
                 this.update(cx, |view, cx| {
                     if view.toast.as_ref().map(|toast| toast.seq) == Some(seq) {
-                        view.toast = None;
-                        cx.notify();
+                        let persistent = view.toast.as_ref().unwrap().persistent;
+                        if !persistent {
+                            view.toast = None;
+                            cx.notify();
+                        }
                     }
                 })
             });
@@ -694,11 +731,11 @@ impl SettingsView {
                 match result {
                     Ok(release) => {
                         if update::is_newer(&release.version, update::CURRENT_VERSION) {
-                            view.show_toast(
+                            view.show_upgrade_toast(
                                 format!(
-                                    "发现新版本 v{}（当前 v{}）",
-                                    release.version,
-                                    update::CURRENT_VERSION
+                                    "发现新版本！\n当前版本: v{}\n最新版本: v{}",
+                                    update::CURRENT_VERSION,
+                                    release.version
                                 ),
                                 cx,
                             );
@@ -716,6 +753,155 @@ impl SettingsView {
             });
         })
         .detach();
+    }
+
+    /// “立即升级”：后台执行与 `self-update` 子命令相同的升级流程，
+    /// 经共享进度状态轮询刷新持久 Toast，结果回调到 UI；升级中可点“取消”中断。
+    fn start_upgrade(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+
+        if self.upgrading {
+            return;
+        }
+        self.upgrading = true;
+        // 当前提示改为持久进度提示，并移除按钮避免重复触发
+        if let Some(toast) = self.toast.as_mut() {
+            toast.message = "正在下载升级包…".into();
+            toast.action_upgrade = false;
+            toast.action_cancel = true;
+            toast.persistent = true;
+        }
+        cx.notify();
+
+        // 进度共享状态：0=下载中 1=解压 2=替换；percent 为下载百分比；cancelled 为用户取消标志
+        let phase = Arc::new(AtomicU8::new(0));
+        let percent = Arc::new(AtomicU64::new(0));
+        let done = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.upgrade_cancel = Some(cancelled.clone());
+        let (p_phase, p_percent, p_done) = (phase.clone(), percent.clone(), done.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let task = cx.background_executor().spawn(async move {
+                let result = update::self_update_with_progress(
+                    &|| cancelled.load(Ordering::Relaxed),
+                    &mut |progress| match progress {
+                        update::UpdateProgress::Downloading { .. } => {
+                            p_phase.store(0, Ordering::Relaxed);
+                            p_percent
+                                .store(progress.percent().unwrap_or(0) as u64, Ordering::Relaxed);
+                        }
+                        update::UpdateProgress::Extracting => p_phase.store(1, Ordering::Relaxed),
+                        update::UpdateProgress::Replacing => p_phase.store(2, Ordering::Relaxed),
+                    },
+                );
+                p_done.store(true, Ordering::Relaxed);
+                result
+            });
+            // 轮询进度并刷新持久 Toast 文案，任务结束后展示最终结果
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                let finished = done.load(Ordering::Relaxed);
+                let message = match phase.load(Ordering::Relaxed) {
+                    0 => {
+                        format!("正在下载升级包… {}%", percent.load(Ordering::Relaxed))
+                    }
+                    1 => "下载完成，正在解压…".to_string(),
+                    _ => "正在替换可执行文件…".to_string(),
+                };
+                let _ = this.update_in(cx, |view, _window, cx| {
+                    if let Some(toast) = view.toast.as_mut()
+                        && toast.persistent
+                    {
+                        toast.message = message.into();
+                    }
+                    cx.notify();
+                });
+                if finished {
+                    break;
+                }
+            }
+            let result = task.await;
+            let _ = this.update_in(cx, |view, _window, cx| {
+                view.upgrading = false;
+                view.upgrade_cancel = None;
+                let cancelled = result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.is::<update::UpdateCancelled>());
+                match result {
+                    Ok(update::UpdateOutcome::Updated) => {
+                        view.show_restart_toast("升级成功！", cx);
+                    }
+                    Ok(update::UpdateOutcome::AlreadyUpToDate) => {
+                        view.show_toast(format!("已是最新版本 v{}", update::CURRENT_VERSION), cx);
+                    }
+                    // 用户主动取消：直接关闭进度提示，不提示失败
+                    Err(e) if cancelled => {
+                        view.toast = None;
+                        let _ = e;
+                    }
+                    Err(e) => {
+                        view.show_toast(format!("升级失败：{:#}", e), cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 升级中“取消”：置位取消标志，立即关闭进度提示并恢复界面；
+    /// 后台下载在下一个检查点自行中止（未替换前原文件不受影响）。
+    fn cancel_upgrade(&mut self, cx: &mut Context<Self>) {
+        use std::sync::atomic::Ordering;
+        if let Some(flag) = &self.upgrade_cancel {
+            flag.store(true, Ordering::Relaxed);
+        }
+        self.toast = None;
+        self.upgrading = false;
+        cx.notify();
+    }
+
+    /// “立即重启”：脱离当前会话延迟拉起新版本实例，再退出当前应用。
+    /// 直接 spawn 子进程会随旧实例的进程组一并被终止，因此用 setsid（Windows 用 detached 标志）脱离。
+    fn restart_app(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // 升级替换后 current_exe 会带 “ (deleted)” 后缀，需规范化后才能启动新实例
+        if let Ok(exe) = update::current_exe_path() {
+            let exe = exe.display().to_string();
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const DETACHED_PROCESS: u32 = 0x0000_0008;
+                const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+                let _ = std::process::Command::new(&exe)
+                    .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+                    .spawn();
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                // 延迟 0.3s 启动，避开旧实例退出与新实例初始化的竞态
+                let script = format!("sleep 0.3; exec '{exe}'");
+                let _ = std::process::Command::new("setsid")
+                    .arg("sh")
+                    .arg("-c")
+                    .arg(&script)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            }
+        }
+        self.toast = None;
+        self.upgrading = false;
+        cx.quit();
+    }
+
+    /// “稍后”：关闭当前持久提示（发现新版本 / 升级成功），保持当前实例。
+    fn dismiss_restart_toast(&mut self, cx: &mut Context<Self>) {
+        self.toast = None;
+        cx.notify();
     }
 
     fn render_remote_files(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -786,9 +972,9 @@ impl SettingsView {
                                     .gap_1()
                                     .child(
                                         pointer_button(format!("sync-{}", name))
-                                            .xsmall()
                                             .ghost()
-                                            .label("恢复")
+                                            .xsmall()
+                                            .child(div().text_size(px(10.)).child("恢复"))
                                             .loading(downloading)
                                             .disabled(any_busy && !downloading)
                                             .on_click(cx.listener(
@@ -803,10 +989,10 @@ impl SettingsView {
                                     )
                                     .child(
                                         pointer_button(format!("delete-remote-{}", name))
-                                            .xsmall()
                                             .ghost()
                                             .danger()
-                                            .label("删除")
+                                            .xsmall()
+                                            .child(div().text_size(px(10.)).child("删除"))
                                             .loading(deleting)
                                             .disabled(any_busy && !deleting)
                                             .on_click(cx.listener(
@@ -1019,11 +1205,11 @@ impl SettingsView {
             )
             .child(
                 h_flex()
-                    .items_center()
                     .gap_2()
+                    .justify_center()
                     .child(
                         pointer_button("about-github")
-                            .outline()
+                            .ghost()
                             .rounded(px(18.))
                             .icon(IconName::Github)
                             .label("GitHub")
@@ -1031,7 +1217,7 @@ impl SettingsView {
                     )
                     .child(
                         pointer_button("about-feedback")
-                            .outline()
+                            .ghost()
                             .rounded(px(18.))
                             .icon(IconName::Github)
                             .label("问题反馈")
@@ -1145,7 +1331,73 @@ impl Render for SettingsView {
                     ),
             )
             .when_some(toast_state, |el, state| {
-                el.child(toast::toast_overlay(&state))
+                let action = if state.action_restart {
+                    // 升级成功：立即重启（拉起新实例并退出）或稍后（关闭提示）
+                    Some(
+                        h_flex()
+                            .gap_2()
+                            .justify_center()
+                            .child(
+                                pointer_button("toast-restart")
+                                    .primary()
+                                    .label("立即重启")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                        this.restart_app(window, cx);
+                                    })),
+                            )
+                            .child(
+                                pointer_button("toast-later")
+                                    .ghost()
+                                    .label("关闭")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.dismiss_restart_toast(cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                    )
+                } else if state.action_upgrade && !self.upgrading {
+                    // 发现新版本：立即升级或取消（提示持久显示，不自动关闭）
+                    Some(
+                        h_flex()
+                            .gap_2()
+                            .justify_center()
+                            .child(
+                                pointer_button("toast-upgrade")
+                                    .primary()
+                                    .label("立即升级")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                        this.start_upgrade(window, cx);
+                                    })),
+                            )
+                            .child(
+                                pointer_button("toast-cancel")
+                                    .ghost()
+                                    .label("取消")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.dismiss_restart_toast(cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                    )
+                } else if state.action_cancel && self.upgrading {
+                    // 升级进行中：允许取消中断下载（网络卡住时不被永久阻塞）
+                    Some(
+                        h_flex()
+                            .justify_center()
+                            .child(
+                                pointer_button("toast-upgrade-cancel")
+                                    .ghost()
+                                    .label("取消")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.cancel_upgrade(cx);
+                                    })),
+                            )
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                };
+                el.child(toast::toast_overlay(&state, action))
             })
     }
 }

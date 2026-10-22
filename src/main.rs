@@ -21,15 +21,63 @@ mod ui;
 use gpui_kit::AppContext as _;
 use ui::toast::BottomToast as _;
 
+/// `help` 子命令：打印用法说明。
+fn print_help() {
+    println!(
+        "quota-watch {}\n\n用法：quota-watch [子命令]\n\n子命令：\n  version      打印版本号后退出\n  self-update  检查并升级到最新版本（重启应用后生效）\n  help         打印本帮助信息\n\n不带子命令时启动图形界面。",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
 fn main() {
-    // --version / -V：打印版本号后退出，不启动 GUI（供命令行 / 包管理器核对）。
-    let mut cli_args = std::env::args();
-    if cli_args.next().is_some() && cli_args.any(|a| a == "--version" || a == "-V") {
-        // Release（GUI 子系统）无控制台：附加父进程控制台后打印；失败（如双击）静默。
-        #[cfg(all(target_os = "windows", not(debug_assertions)))]
-        win32::attach_parent_console();
-        println!("quota-watch {}", env!("CARGO_PKG_VERSION"));
-        return;
+    // CLI 子命令分发：version / self-update / help；无匹配（含未知参数）进入 GUI 模式。
+    match std::env::args().nth(1) {
+        Some(cmd) if cmd == "version" => {
+            // Release（GUI 子系统）无控制台：附加父进程控制台后打印；失败（如双击）静默。
+            #[cfg(all(target_os = "windows", not(debug_assertions)))]
+            win32::attach_parent_console();
+            println!("quota-watch {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some(cmd) if cmd == "help" => {
+            #[cfg(all(target_os = "windows", not(debug_assertions)))]
+            win32::attach_parent_console();
+            print_help();
+            return;
+        }
+        Some(cmd) if cmd == "self-update" => {
+            #[cfg(all(target_os = "windows", not(debug_assertions)))]
+            win32::attach_parent_console();
+            // 进度行用 \r 原地刷新；最终结果换行打印
+            let result = update::self_update_with_progress(&|| false, &mut |progress| {
+                let line = match progress {
+                    update::UpdateProgress::Downloading { .. } => match progress.percent() {
+                        Some(pct) => format!("下载升级包… {pct}%"),
+                        None => "下载升级包…".to_string(),
+                    },
+                    update::UpdateProgress::Extracting => "下载完成，正在解压…".to_string(),
+                    update::UpdateProgress::Replacing => "正在替换可执行文件…".to_string(),
+                };
+                eprint!("\r{line}");
+            });
+            match result {
+                Ok(update::UpdateOutcome::AlreadyUpToDate) => {
+                    eprintln!();
+                    println!("已是最新版本 v{}", update::CURRENT_VERSION);
+                }
+                Ok(update::UpdateOutcome::Updated) => {
+                    eprintln!();
+                    println!("升级成功，重启应用后生效");
+                }
+                Err(e) => {
+                    eprintln!();
+                    eprintln!("升级失败：{:#}", e);
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        _ => {}
     }
 
     // 启动时加载配置（3.4）：解析失败时 persistence 已自动备份并以空状态启动。
@@ -47,7 +95,7 @@ fn main() {
             let window_visible = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
 
             // 窗口与 RootView 挂载：固定宽度 445px，默认高度 680px（最小 680px，无上限）。
-            // 445×680 为请求尺寸，实际观测窗口约 400×640（X11 下存在约 45×40 的差值）。
+            // 445×680 为请求尺寸，实际观测窗口约 400×640（X11 下存在约 40×40 的差值）。
             // 自绘标题栏（Client 装饰）：移除系统标题栏，三键由软件绘制。
             let (handle, _root) = gpui_kit::open_window(
                 gpui_kit::WindowOptions {
