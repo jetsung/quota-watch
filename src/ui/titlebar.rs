@@ -2,13 +2,17 @@ use gpui_kit::base::h_flex;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, FontWeight, MouseButton, Window};
+use gpui_kit::{App, ClickEvent, FontWeight, MouseButton, Window};
 
-/// 自绘标题栏：左区应用图标 + 软件名，右区 缩小/放大/关闭 三键。
+/// 自绘标题栏：左区应用图标 + 软件名，右区 设置/缩小/放大/关闭 四键。
 /// 空白区按下左键拖动移动窗口（双击忽略，不最大化）；
 /// 缩小/关闭 = 最小化到托盘（关闭同时从 KWin 任务栏隐藏）；
 /// 放大 = 最大化/还原切换（图标随状态联动）。
-pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
+pub fn render_titlebar(
+    window: &Window,
+    on_settings: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
     let theme = cx.theme().clone();
     let maximized = window.is_maximized();
     h_flex()
@@ -58,6 +62,15 @@ pub fn render_titlebar(window: &Window, cx: &App) -> impl IntoElement {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     cx.stop_propagation();
                 })
+                // 设置：打开设置面板（通知开关 / 导入导出 / WebDAV 同步）
+                .child(
+                    Button::new("titlebar-settings")
+                        .ghost()
+                        .icon(Icon::default().data(MENU_SVG))
+                        .tooltip("设置")
+                        .accessibility_label("设置")
+                        .on_click(on_settings),
+                )
                 // 缩小：可用态，托盘常驻语义不变
                 .child(
                     Button::new("titlebar-minimize")
@@ -109,6 +122,7 @@ fn app_icon() -> Icon {
 }
 
 /// 三个窗口控制键的内联 SVG（Lucide 风格，currentColor 描边）。
+const MENU_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>"##;
 const MINUS_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>"##;
 const SQUARE_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="5" y="5" rx="2"/></svg>"##;
 const CLOSE_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>"##;

@@ -8,19 +8,24 @@
 src/
 ├── main.rs           # 入口：CLI 参数、配置加载、窗口创建、tick 引擎与托盘启动
 ├── models.rs         # ServiceEntry / AppState / 间隔表达式解析 / 校验
-├── persistence.rs    # 配置加载（损坏自动备份）与原子保存
+├── persistence.rs    # 配置加载（损坏自动备份、旧文件名迁移）与原子保存
 ├── timer_engine.rs   # 1s tick：决策引擎（C→A→B）与标志位管理
 ├── notifications.rs  # 通知服务抽象（notify-rust）与文案
+├── webdav.rs         # WebDAV 云端备份客户端（PROPFIND/GET/PUT/DELETE + MKCOL 建目录 + 密码加密/解密）
+├── update.rs         # GitHub Releases 版本检查与仓库/反馈链接常量
 ├── tray.rs           # 系统托盘（KSNI）与窗口激活/隐藏
 ├── window_control.rs # 跨后端窗口控制：隐藏到托盘 / 恢复 / 最大化（KWin 优先，X11/EWMH 回退）
 ├── kwin.rs           # KWin D-Bus 脚本窗口控制（Wayland）
+├── win32.rs          # Windows 平台适配
 └── ui/
-    ├── mod.rs        # RootView：布局组合、对话框、删除确认、窗口关闭拦截
-    ├── titlebar.rs   # 自绘标题栏与窗口控制键
+    ├── mod.rs        # RootView：布局组合、对话框、删除确认、设置入口、窗口关闭拦截
+    ├── titlebar.rs   # 自绘标题栏、窗口控制键与设置按钮
     ├── service_list.rs / service_card.rs  # 服务列表（响应式分列）与卡片
     ├── footer.rs     # 全局通知开关 + 新建服务
     ├── statusbar.rs  # 版本号 + 版权信息
     ├── modal.rs      # Add/Edit 表单（模式切换、回车保存）
+    ├── settings.rs   # 设置对话框（桌面通知 / 备份与恢复 / 导入与导出 / 关于）
+    ├── toast.rs      # 居中遮罩提示框（忙碌进度与结果反馈统一载体）
     └── checkbox.rs   # 自定义勾选框（✓ 字符）
 ```
 
@@ -73,18 +78,23 @@ src/
 
 `HH:MM:SS`，两位小时位，负值截断为 0（如 3661s → `01:01:01`，12m34s → `00:12:34`）。
 
+### 3.6 WebdavConfig（云端备份配置）
+
+字段：`server_url`（必填，http/https）、`username`、`password`、`remote_dir`（置空默认 `/quota-watch`）。随 `PersistedState.webdav_config: Option<WebdavConfig>` 持久化（见 §4），凭据仅存本地配置文件；设置表单中密码输入框为**掩码模式**（`masked(true)`），不明文展示。
+
 ## 4. 持久化（persistence.rs）
 
-- **路径**：`directories::ProjectDirs::from("com", "quota-watch", "quota-notifier")` 的 config 目录 + `services.json`；回退 `$HOME/.config/quota-notifier/services.json`。
+- **路径**：`directories::ProjectDirs::from("com", "quota-watch", "quota-notifier")` 的 config 目录 + `quota-watch.json`；回退 `$HOME/.config/quota-notifier/quota-watch.json`。
+- **旧文件名迁移**：加载前若 `quota-watch.json` 不存在而 `services.json` 存在，则一次性 `rename` 为 `quota-watch.json`（`migrate_legacy_path`），用户数据无损。
 - **加载 `load()`**：
   - 文件不存在 → 默认空状态，无告警。
   - 解析成功 → 返回状态。
-  - 解析失败 → 原文件**重命名备份**为 `services.json.bak.<YYYYMMDD-HHMMSS>`，以空状态启动，返回告警消息。
+  - 解析失败 → 原文件**重命名备份**为 `quota-watch.json.bak.<YYYYMMDD-HHMMSS>`，以空状态启动，返回告警消息。
   - 读取失败 → 空状态 + 告警消息。
-  - 告警消息在 GUI 启动后以 error Toast 展示。
+  - 告警消息在 GUI 启动后以 Toast 展示。
 - **保存 `save()`**：`to_string_pretty` → 写 `<path>.tmp`（`sync_all`）→ 原子 `rename`（Windows 上先删除旧文件）。失败时保留 `.tmp` 供排查，错误由 Toast 展示。
 - **持久化时机**：每次通过 `mutate` 的成功变更；tick 中发生重置滚动时异步保存。
-- **序列化内容**：`PersistedState { services, global_notifications_enabled }`；旧配置中的废弃字段（如 `timezone`）反序列化时自动忽略。
+- **序列化内容**：`PersistedState { services, global_notifications_enabled, webdav_config }`；`webdav_config`（服务器地址/用户名/密码/远程目录）为 `Option`，旧配置无此字段时反序列化为 None；废弃字段（如 `timezone`）自动忽略。
 
 ## 5. Tick 引擎与通知决策（timer_engine.rs）
 
@@ -131,16 +141,18 @@ src/
 
 ### 7.1 窗口（main.rs / ui/mod.rs）
 
-- 固定宽度 **400px**，初始高度 **720px**（完整容纳对话框表单），最小 **640px**，无上限。
+- 请求宽度 **445px**、初始高度 **680px**（实际观测窗口约 **400×640**），最小 **445×680**，无上限。
+- 矮窗口（< 720px）下"新建/编辑"对话框字段区滚动、操作按钮固定可见。
 - **自绘标题栏**（Client 装饰，无系统标题栏）。
-- X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=400，高度 [640, 16384]），避免被 gpui-fast 后端覆盖。
+- X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=445，高度 [680, 16384]），避免被 gpui-fast 后端覆盖。
 - `app_id = "quota-watch"`（Wayland/KWin 托盘脚本按 resourceClass 匹配）。
 - **关闭拦截**：`on_window_should_close` 阻止真正关闭，改为"最小化到托盘"（`window_control::hide_to_tray`：最小化 + 隐藏任务栏图标，KWin 优先、X11/EWMH 回退，进程常驻托盘）。
 
 ### 7.2 自绘标题栏（titlebar.rs）
 
-高 36px，左区应用图标（内联 SVG）+ 软件名"配额重置提醒"；空白区左键拖动移动窗口（双击不最大化）；按钮区拦截按下事件防止误拖动。右区三键：
+高 36px，左区应用图标（内联 SVG）+ 软件名"配额重置提醒"；空白区左键拖动移动窗口（双击不最大化）；按钮区拦截按下事件防止误拖动。右区按钮（图标均为内联 SVG）：设置（菜单图标，打开设置对话框，见 7.10）、最小化、最大化/还原、关闭：
 
+- **设置**：`on_settings` 回调打开 `SettingsView` 对话框（`window.open_dialog`）。
 - **最小化**：`minimize_window()`。
 - **最大化/还原**：`window_control::toggle_maximize` 显式设置 `_NET_WM_STATE_MAXIMIZED_*`（不依赖 WM 的 Toggle 语义——实测 xfwm4 在隐藏/恢复循环后 Toggle 状态缓存会失同步）；无 X11 句柄时回退 `zoom_window()`。
 - **关闭**：等同"最小化到托盘"，调 `window_control::hide_to_tray`（与关闭拦截同一入口）；hover 红 danger 色。
@@ -153,7 +165,7 @@ src/
 
 ### 7.4 服务卡片（service_card.rs）
 
-每张卡片包含：服务名（16px 粗体）、状态徽章（14px 白色粗体 + 纯色背景）、28px 粗体倒计时、"下次重置: <本地时区 YYYY-MM-DD HH:MM:SS>"、静音勾选框、编辑/删除按钮。
+每张卡片包含：服务名（18px 粗体）、状态徽章（14px 白色粗体 + 纯色背景）、28px 粗体倒计时、"下次重置: <本地时区 YYYY-MM-DD HH:MM:SS>"、静音勾选框、编辑/删除按钮。静音勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
 
 - **状态徽章**（按剩余时间 vs 阈值）：
 
@@ -170,7 +182,7 @@ src/
 
 ### 7.5 Footer（footer.rs）
 
-左侧"启用桌面通知"勾选框（全局开关，变更经 `mutate` 持久化）；右侧主色"新建服务"按钮。
+仅保留主色"新建服务"按钮（右侧）。全局通知开关已从 Footer 迁移至设置面板"桌面通知"标签（见 7.10）。
 
 ### 7.6 状态栏（statusbar.rs）
 
@@ -178,11 +190,12 @@ src/
 
 ### 7.7 勾选框（checkbox.rs）
 
-自定义实现（gpui-kit 勾选图标无法定制为字符）：16px 圆角方框，未勾选 = 主题 input 边框；勾选 = 主色背景 + 白色粗体"✓"；点击切换并回调新值。
+自定义实现（gpui-kit 勾选图标无法定制为字符）：16px 圆角方框，未勾选 = 主题 input 边框；勾选 = 主色背景 + 白色粗体"✓"；点击切换并回调新值。标签字号默认跟随主题，支持传入自定义字号（如静音勾选框 13px）。
 
 ### 7.8 Add/Edit 表单（modal.rs）
 
 - **对话框构造约束**：`AddEditView` 实体在 `open_dialog` **之前**创建，builder 仅引用句柄（builder 重建时不会新建实体）；初始焦点 guard（`Cell<bool>`）保证仅首次构建时聚焦服务名输入框。
+- **标题与提示样式**：对话框标题 17px 粗体，视觉层级高于字段标签；保存成功 Toast 文字居中。
 - **字段**：服务名、重置间隔（支持表达式）、URL（可选）、下次重置时间 或 时/分/秒倒计时（随模式切换）、提醒阈值（分钟）、周期提醒间隔（分钟）、静音（勾选框）。
 - **默认值**：新建时间隔 `5`、阈值 `60`、周期 `5`、下次重置 = now + 5h。
 - **编辑预填**：间隔 `%.2` 格式；下次重置 = 当前 `next_reset_at` 本地时区格式化；倒计时 = 距下次重置的 HH:MM:SS。
@@ -199,6 +212,27 @@ src/
 ### 7.9 删除确认（ui/mod.rs）
 
 确认对话框："确定删除 '<服务名>'？此操作不可撤销。" 确定 → 移除 + 持久化 + success Toast"已删除"；取消不做任何变更。
+
+### 7.10 设置对话框（settings.rs）
+
+标题栏设置按钮打开，对话框内左侧竖排标签列 + 右侧内容区，共四个标签：**桌面通知 / 备份与恢复 / 导入与导出 / 关于**。
+
+- **光标约定**：页内所有可点击按钮统一 `cursor_pointer()` 手型光标（组件库默认按钮为系统箭头，经 `pointer_button` 助手覆盖）；对话框内部的"取消/确定"按钮由组件库渲染，不受此约束。
+- **桌面通知**：说明文字 + "启用桌面通知"勾选框（13px 标签），变更即经 `mutate` 持久化全局开关。
+- **备份与恢复**：
+  - WebDAV 连接配置四字段：服务器地址、用户名、密码（**掩码输入框**，不回显明文）、远程目录；"保存连接配置"（粗体）+"测试"（small）按钮一行居中。**远程目录置空时保存/使用均回填默认值 `/quota-watch`**（项目专属子目录，避免与其它项目混在同一云端目录）。
+  - "上传当前配置"（primary 整行）与"查看云端列表"（整行）两个操作按钮。
+  - 云端列表：条目紧凑排布（`px_2 py_1`、行距 `gap_1`），每条目显示文件名 + 修改时间，右侧"恢复""删除"两个 xsmall **无边框文字按钮**（ghost 样式）；空列表提示"云端无配置文件"**整行居中**（12px muted）。
+  - 恢复/删除均需居中确认框（标题"恢复云端配置/删除云端配置"，文件名描述用 12px 小字号防折行）。
+  - **五类忙碌状态（测试/上传/列表/恢复/删除）一律以居中 Toast 提示框呈现进度与结果**（见 7.11），不在页面底部显示文字提示；操作期间对应按钮呈 loading 态并整体禁用相关操作，后台异步执行不阻塞 UI。
+- **导入与导出**：`rfd::FileDialog` 原生文件选择（JSON 过滤器）。导入解析 `PersistedState` 后弹居中确认框，确认即整体覆盖（服务列表、通知开关与 WebDAV 配置）并回填设置表单；导出文件名为带时间戳的 `quota-watch_<YYYYMMDD-HHMMSS>.json`，原子写入。
+- **关于**：居中堆叠布局——应用名（15px 粗体）→ 版本号 `v<当前版本>`（12px muted）→ "检查更新"按钮单独一行（胶囊圆角）→ 一行两个胶囊描边按钮"GitHub"与"问题反馈"（均带 `IconName::Github` 图标，分别 `open_url` 仓库主页与 issues/new）。图标渲染要求 `main.rs` 以 `with_assets(gpui_kit::assets::Assets)` 注册内嵌图标资源。
+
+### 7.11 居中提示框 Toast（toast.rs）
+
+- 全屏居中遮罩（`toast_overlay`），带 `occlude()` 拦截下层点击——提示期间（约 2.25s）下层按钮点击可能被吞，属预期行为。
+- 动效：淡入 + 上浮进入，2s 停留后 0.25s 淡出移除（库内 Toast 自动关闭写死 5s，故用自定义两段定时）。
+- 主窗口与设置对话框共用（`BottomToast` trait / `show_toast`）；连续提示以序号（`toast_seq`）防旧任务误清新提示。
 
 ## 8. 系统托盘（tray.rs）
 
@@ -234,13 +268,33 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - `hide_via_kwin`：最小化并隐藏任务栏图标（进程保持运行）。
 - 非 KWin 环境（无 qdbus）调用失败返回 false，静默回退到 X11/EWMH 通道。
 
-## 10. 测试规范
+## 10. WebDAV 云端备份（webdav.rs）
+
+- 客户端基于 `reqwest`（blocking）+ Basic Auth（用户名密码均为空时不带认证），30s 超时，UA `quota-watch/<版本>`。
+- **连接测试**：对配置的远程目录 URL 发 PROPFIND `Depth: 0`，状态成功即可用。
+- **列目录**：PROPFIND `Depth: 1` 解析 multistatus XML，仅保留配置文件（`is_services_file`：当前前缀 `quota-watch`，**兼容历史 `services` 前缀**，且以 `.json` 结尾），按修改时间降序。
+- **上传**：文件名由 `timestamped_filename()` 生成为 `quota-watch_<YYYYMMDD-HHMMSS>.json`（不重名），PUT JSON 内容。**上传前 WebDAV 密码字段加密**：`encrypt_persisted` 用内嵌密钥的 XChaCha20-Poly1305（AEAD）加密，输出 `enc:v1:<base64(nonce||密文)>`，云端备份不含明文密码（内嵌密钥防云服务商侧直接读密码，不防反编译本程序者）。
+- **恢复**：GET 下载后解析 `PersistedState`，`decrypt_persisted` 解密密码（无 `enc:v1:` 前缀的历史明文备份原样兼容），再覆盖本地（含 webdav_config）——UI 层已加确认框。本地导入（7.10 导入与导出）同样兼容解密。
+- **删除**：DELETE 指定文件。
+- **自动建目录**：`list_files` / `upload_file` 前先对目录 URL 发 MKCOL（`ensure_directory`）；目录已存在时服务器返回 405 等状态**一律忽略**，真正的错误由后续操作暴露——避免首次使用因目录不存在报 404。
+- URL 拼接对文件名做路径段编码；远程目录归一化（补首尾 `/`）有单测覆盖。
+
+## 11. 更新检查（update.rs）
+
+- `check_latest()`：请求 GitHub Releases `latest` API，返回 `ReleaseInfo { version }`（去 `v` 前缀）。
+- `is_newer(latest, current)`：`version_key` 解析为 `(major, minor, patch)` 三级元组逐项比较——去 `v` 前缀、按 `.` 分段、每段取 `-`/`+` 之前的数字（非数字记 0）。**预发布后缀不参与比较**：`0.2.0-beta.1` 与 `0.2.0` 同键，beta 用户不会收到同版本其他预发布提醒，仅正式版本大于当前时才提示。
+- 常量：`REPO_URL`（仓库主页）、`ISSUES_URL`（`issues/new` 问题反馈页）、`CURRENT_VERSION`（`CARGO_PKG_VERSION`）。
+- 设置页"关于"标签触发，结果（发现新版本 / 已最新 / 失败原因）以 Toast 呈现；自更新能力预留 `--self-update`，当前未实现。
+
+## 12. 测试规范
 
 各模块 `#[cfg(test)]` 内联测试，覆盖：
 
 - `parse_interval_expr` 表达式、`next_reset_at`（整数/浮点/跨天）、倒计时格式、校验拒绝、AppState 增删改。
 - 旧配置含废弃 `timezone` 字段可正常反序列化。
-- 持久化 roundtrip、文件不存在返回默认、损坏文件备份分支（测试通过临时目录 + 环境变量隔离，不读真实用户配置）。
+- 持久化 roundtrip、文件不存在返回默认、损坏文件备份分支、旧 `services.json` 一次性迁移为 `quota-watch.json`（测试通过临时目录 + 环境变量隔离，不读真实用户配置）。
+- `WebdavConfig` 序列化往返、WebDAV 客户端远程目录归一化。
+- 密码加密：密文 `enc:v1:` 前缀与 roundtrip（nonce 随机、不含明文）、历史明文透传、整份配置 `encrypt/decrypt_persisted` 往返、篡改密文拒绝、上传→下载→解密全链路集成测试。
 - 决策引擎单测（阈值外无动作、首次仅一次、周期间隔、静音抑制 B 不抑制 A、全局禁用抑制 A/B 不抑制 C、重置多周期对齐、完整周期 A→B→C）。
 - 集成测试（加载→tick→通知→重置滚动；静音/全局开关/通知失败不中断）。
 - 性能基准（60 服务 < 8ms/tick）。

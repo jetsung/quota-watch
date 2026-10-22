@@ -382,6 +382,7 @@ mod tests {
         AppState::from_persisted(PersistedState {
             services: vec![e],
             global_notifications_enabled: global,
+            ..Default::default()
         })
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "quota-watch"
-version = "0.1.0"
+version = "0.2.0-beta.1"
 edition = "2024"
 description = "一款轻量的桌面配额倒计时提醒工具"
 license = "Apache-2.0"
@@ -20,6 +20,11 @@ directories = "6.0.0"
 anyhow = "1.0.104"
 tray-icon = { version = "0.26.1", default-features = false, features = ["ksni", "muda-snapshot"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+quick-xml = "0.41"
+rfd = "0.15"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6.2"

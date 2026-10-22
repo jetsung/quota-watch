@@ -199,11 +199,23 @@ pub struct RuntimeFlags {
     pub last_alert_at: Option<DateTime<Utc>>,
 }
 
-/// 持久化结构：仅序列化服务列表 + 全局开关。
+/// WebDAV 连接配置（持久化存储；密码仅 UI 掩码，本地不加密）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebdavConfig {
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+    pub remote_dir: String,
+}
+
+/// 持久化结构：仅序列化服务列表 + 全局开关 + WebDAV 配置。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersistedState {
     pub services: Vec<ServiceEntry>,
     pub global_notifications_enabled: bool,
+    /// 旧配置无此字段时为 None（向后兼容）。
+    #[serde(default)]
+    pub webdav_config: Option<WebdavConfig>,
 }
 
 /// 全局状态变更事件：`mutate` 每次成功变更后发射，供 UI 监听刷新。
@@ -219,6 +231,7 @@ pub struct AppState {
     pub services: Vec<ServiceEntry>,
     pub runtime: HashMap<Uuid, RuntimeFlags>,
     pub global_notifications_enabled: bool,
+    pub webdav_config: Option<WebdavConfig>,
 }
 
 impl AppState {
@@ -227,6 +240,7 @@ impl AppState {
             services: p.services,
             runtime: HashMap::new(),
             global_notifications_enabled: p.global_notifications_enabled,
+            webdav_config: p.webdav_config,
         }
     }
 
@@ -234,6 +248,7 @@ impl AppState {
         PersistedState {
             services: self.services.clone(),
             global_notifications_enabled: self.global_notifications_enabled,
+            webdav_config: self.webdav_config.clone(),
         }
     }
 
@@ -438,6 +453,34 @@ mod tests {
         let state: PersistedState = serde_json::from_str(json).unwrap();
         assert!(state.services.is_empty());
         assert!(state.global_notifications_enabled);
+        // 旧配置无 webdav_config 字段 → None
+        assert!(state.webdav_config.is_none());
+    }
+
+    #[test]
+    fn webdav_config_roundtrip() {
+        let json = r#"{
+            "services": [],
+            "global_notifications_enabled": false,
+            "webdav_config": {
+                "server_url": "https://dav.example.com",
+                "username": "user",
+                "password": "secret",
+                "remote_dir": "/quota-watch"
+            }
+        }"#;
+        let state: PersistedState = serde_json::from_str(json).unwrap();
+        let cfg = state.webdav_config.clone().unwrap();
+        assert_eq!(cfg.server_url, "https://dav.example.com");
+        assert_eq!(cfg.remote_dir, "/quota-watch");
+
+        let serialized = serde_json::to_string(&state).unwrap();
+        let back: PersistedState = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            back.webdav_config.unwrap().password,
+            "secret",
+            "WebdavConfig 应可往返序列化"
+        );
     }
 
     #[test]
