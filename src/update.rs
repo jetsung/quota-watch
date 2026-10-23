@@ -354,12 +354,15 @@ pub fn self_update_with_progress(
 fn extract_binary(archive_path: &std::path::Path, dest: &std::path::Path) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        use std::io::Read as _;
         let file = std::fs::File::open(archive_path).context("打开升级压缩包失败")?;
         let mut zip = zip::ZipArchive::new(file).context("读取 zip 升级包失败")?;
         // 包内为单个可执行文件，按名字后缀匹配
         let mut names: Vec<String> = (0..zip.len())
-            .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+            .filter_map(|i| {
+                zip.by_index(i)
+                    .ok()
+                    .and_then(|f| f.name().ok().map(|n| n.into_owned()))
+            })
             .collect();
         names.sort();
         let target = names
