@@ -3,18 +3,22 @@ mod footer;
 mod modal;
 mod service_card;
 mod service_list;
+mod settings;
 pub mod statusbar;
 pub mod titlebar;
+pub(crate) mod toast;
 
 pub use modal::AddEditView;
+pub use settings::SettingsView;
+use toast::ToastState;
 
 use crate::models::{self, AppState, ServiceEntry};
 use gpui_kit::base::v_flex;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, IntoElement, MouseDownEvent, ParentElement, Render, Window,
+    App, ClickEvent, Context, Entity, IntoElement, MouseDownEvent, ParentElement, Render,
+    SharedString, Window, px,
 };
 use std::rc::Rc;
 use uuid::Uuid;
@@ -23,6 +27,8 @@ use uuid::Uuid;
 /// 处理空状态占位与引导；承载 Add/Edit Modal、删除确认与全局开关交互。
 pub struct RootView {
     state: Entity<AppState>,
+    toast: Option<ToastState>,
+    toast_seq: u64,
 }
 
 impl RootView {
@@ -36,7 +42,7 @@ impl RootView {
         // gpui-fast X11 后端会在 GPU 初始化完成（异步）后写入自己的
         // WM_SIZE_HINTS（max_size 恒为纹理上限），同步写会被其覆盖。
         // 因此延迟并多次重试写入，确保最终落在后端写入之后：
-        // 锁宽 400（min==max），高度 [640, 上限] 可调；此后 WM 直接拒绝
+        // 锁宽 445（min==max），高度 [680, 上限] 可调；此后 WM 直接拒绝
         // 宽度方向的拖拽（无橡皮筋效果，不依赖每帧钳制）。
         let window_handle = window.window_handle();
         cx.spawn(async move |app| {
@@ -48,7 +54,61 @@ impl RootView {
             }
         })
         .detach();
-        Self { state }
+        Self {
+            state,
+            toast: None,
+            toast_seq: 0,
+        }
+    }
+
+    /// 在窗口正中显示提示（淡入上浮）；2 秒后淡出下沉并移除。
+    /// 序号防止旧定时器干扰新提示。
+    pub(crate) fn show_toast(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.toast_seq = self.toast_seq.wrapping_add(1);
+        let seq = self.toast_seq;
+        self.toast = Some(ToastState {
+            seq,
+            message: message.into(),
+            exiting: false,
+            action_upgrade: false,
+            action_restart: false,
+            action_cancel: false,
+            persistent: false,
+        });
+        cx.notify();
+        cx.spawn(async move |this, async_cx| {
+            async_cx
+                .background_executor()
+                .timer(std::time::Duration::from_millis(2000))
+                .await;
+            let _ = async_cx.update(|cx| {
+                this.update(cx, |view, cx| {
+                    if view.toast.as_ref().map(|toast| toast.seq) == Some(seq) {
+                        let persistent = view.toast.as_ref().unwrap().persistent;
+                        if !persistent {
+                            view.toast.as_mut().unwrap().exiting = true;
+                            cx.notify();
+                        }
+                    }
+                })
+            });
+            async_cx
+                .background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
+            let _ = async_cx.update(|cx| {
+                this.update(cx, |view, cx| {
+                    if view.toast.as_ref().map(|toast| toast.seq) == Some(seq) {
+                        let persistent = view.toast.as_ref().unwrap().persistent;
+                        if !persistent {
+                            view.toast = None;
+                            cx.notify();
+                        }
+                    }
+                })
+            });
+        })
+        .detach();
     }
 
     fn lock_window_width_x11(window: &Window) {
@@ -67,8 +127,8 @@ impl RootView {
                 if let Some(wid) = window_id
                     && let Ok((conn, _)) = x11rb::connect(None)
                 {
-                    // WM_SIZE_HINTS: 锁宽 400（min_width == max_width），
-                    // 高度 [640, 16384] 可调；flags=0x30 (PMinSize|PMaxSize)
+                    // WM_SIZE_HINTS: 锁宽 445（min_width == max_width），
+                    // 高度 [680, 16384] 可调；flags=0x30 (PMinSize|PMaxSize)
                     let _ = conn.change_property32(
                         x11rb::protocol::xproto::PropMode::REPLACE,
                         wid,
@@ -76,7 +136,7 @@ impl RootView {
                         x11rb::protocol::xproto::AtomEnum::WM_SIZE_HINTS,
                         &[
                             0x30u32, // flags: PMinSize|PMaxSize
-                            0, 0, 0, 0, 400, 640, 400, 16384, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 445, 680, 445, 16384, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         ],
                     );
                     let _ = conn.flush();
@@ -94,48 +154,72 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         let state = self.state.clone();
+        let host = cx.entity();
         let title = match &editing {
             Some(e) => format!("编辑服务：{}", e.service_name),
             None => "添加服务".to_string(),
         };
         // open_dialog 的 builder 是渲染闭包，重建时会再次执行：
         // 实体必须在打开对话框之前创建，builder 仅引用已有实体句柄。
-        let view = cx.new(|cx| AddEditView::new(window, cx, state, editing, title));
+        let view = cx.new(|cx| AddEditView::new(window, cx, state, host, editing, title));
         // 一次性初始焦点 guard：仅在 builder 首次执行时聚焦服务名输入框
         let initial_focus = std::cell::Cell::new(true);
         window.open_dialog(cx, move |dialog, window, cx| {
             if initial_focus.replace(false) {
                 view.read(cx).name_focus_handle(cx).focus(window, cx);
             }
-            dialog.close_button(false).child(view.clone())
+            dialog
+                .overlay(true)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(view.clone())
+        });
+    }
+
+    /// 打开设置面板（通知开关 / WebDAV 同步 / 配置导入导出）。
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.clone();
+        let view = cx.new(|cx| SettingsView::new(window, cx, state));
+        window.open_dialog(cx, move |dialog, _, _| {
+            // overlay_closable(false)：点击遮罩/主窗体不关闭，仅可通过面板上的“关闭”按钮退出
+            dialog
+                .overlay(true)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(view.clone())
         });
     }
 
     /// 删除确认（6.7）：确认后移除 + 持久化 + Toast；取消不做任何变更。
     fn confirm_delete(&self, id: Uuid, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.state.clone();
-        window.open_alert_dialog(cx, move |alert, _, _| {
+        let host = cx.entity();
+        window.open_alert_dialog(cx, move |alert, win, _| {
             let state2 = state.clone();
+            let host2 = host.clone();
+            // 默认偏移为视口高度的 1/10（靠顶）；按估算的确认框高度换算为垂直居中
+            let margin_top = ((win.viewport_size().height - px(150.)) / 2.).max(px(24.));
             alert
+                .margin_top(margin_top)
                 .title("删除服务")
                 .description(format!("确定删除 “{}”？此操作不可撤销。", name))
                 .ok_text("确定")
                 .cancel_text("取消")
                 .confirm()
-                .on_ok(move |_, win, app| {
-                    let h = win.window_handle();
+                .on_ok(move |_, _win, app| {
+                    let state3 = state2.clone();
+                    let host3 = host2.clone();
+                    let host4 = host2.clone();
                     let result = models::mutate(
-                        &state2,
+                        &state3,
                         app,
                         move |s, _| Ok(s.remove(id)),
                         move |msg, app| {
-                            let _ = h.update(app, |_, w, a| {
-                                w.push_notification(Notification::error(msg), a);
-                            });
+                            host3.update(app, |view, cx| view.show_toast(msg, cx));
                         },
                     );
                     if result == Some(true) {
-                        win.push_notification(Notification::success("已删除"), app);
+                        host4.update(app, |view, cx| view.show_toast("已删除", cx));
                     }
                     true
                 })
@@ -146,27 +230,44 @@ impl RootView {
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = (*self.state.read(cx)).clone();
+        // 设置/新增编辑等对话框打开时，用遮罩盖住主窗体，避免误点下层元素
+        let has_active_dialog = gpui_kit::component::WindowExt::has_active_dialog(window, cx);
         let state_ent = self.state.clone();
 
         // ServiceList（6.3 / 6.4）：每个 id 构造 CardActions
+        let root_entity = cx.entity();
         let make_actions = |id: Uuid| -> service_card::CardActions {
             let state2 = state_ent.clone();
             let entry = state.services.iter().find(|s| s.id == id).cloned();
             service_card::CardActions {
                 on_toggle_mute: {
                     let state3 = state2.clone();
-                    Rc::new(move |_, win, app| {
-                        let h = win.window_handle();
-                        let _ = models::mutate(
-                            &state3,
-                            app,
-                            move |s, _| s.toggle_mute(id),
+                    let root = root_entity.clone();
+                    let name = entry
+                        .as_ref()
+                        .map(|x| x.service_name.clone())
+                        .unwrap_or_default();
+                    Rc::new(move |muted, _, app| {
+                        let muted = *muted;
+                        let name = name.clone();
+                        let result = models::mutate(&state3, app, move |s, _| s.toggle_mute(id), {
+                            let root = root.clone();
                             move |msg, app| {
-                                let _ = h.update(app, |_, w, a| {
-                                    w.push_notification(Notification::error(msg), a);
-                                });
-                            },
-                        );
+                                root.update(app, |view, cx| view.show_toast(msg, cx));
+                            }
+                        });
+                        if result.is_some() {
+                            root.update(app, move |view, cx| {
+                                view.show_toast(
+                                    format!(
+                                        "已{} {} 的静音",
+                                        if muted { "开启" } else { "关闭" },
+                                        name
+                                    ),
+                                    cx,
+                                )
+                            });
+                        }
                     })
                 },
                 on_edit: {
@@ -206,39 +307,45 @@ impl Render for RootView {
             cx,
         );
 
-        // Footer：左侧全局通知开关，右侧"新建服务"
+        // Footer：仅"新建服务"按钮（通知开关已迁移至设置面板）
         let footer = footer::render_footer(
-            state.global_notifications_enabled,
-            {
-                let state3 = state_ent.clone();
-                move |checked, win, app| {
-                    let h = win.window_handle();
-                    let _ = models::mutate(
-                        &state3,
-                        app,
-                        move |s, _| {
-                            s.global_notifications_enabled = *checked;
-                            Ok(())
-                        },
-                        move |msg, app| {
-                            let _ = h.update(app, |_, w, a| {
-                                w.push_notification(Notification::error(msg), a);
-                            });
-                        },
-                    );
-                }
-            },
             cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.open_add_edit(None, window, cx);
             }),
             cx,
         );
 
+        let toast_state = self.toast.clone();
+
         v_flex()
+            .relative()
             .size_full()
-            .child(titlebar::render_titlebar(window, cx))
+            .child(titlebar::render_titlebar(
+                window,
+                cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.open_settings(window, cx);
+                }),
+                cx,
+            ))
             .child(list)
             .child(footer)
             .child(statusbar::render_statusbar(cx))
+            .when(has_active_dialog, |el| {
+                el.child(
+                    gpui_kit::div()
+                        .id("dialog-scrim")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .bg(gpui_kit::hsla(0., 0., 0., 0.18))
+                        .occlude()
+                        .on_click(|_: &gpui_kit::ClickEvent, _, _| {}),
+                )
+            })
+            .when_some(toast_state, |el, state| {
+                el.child(toast::toast_overlay(&state, None))
+            })
     }
 }

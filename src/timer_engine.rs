@@ -32,12 +32,8 @@ pub fn decide(
     let next_reset = service.next_reset_at();
 
     // Condition C：重置滚动（含多周期追赶），优先级最高；不受静音与全局开关影响。
-    if now >= next_reset {
-        let interval_secs = (service.interval_hours * 3600.0).round() as i64;
-        let elapsed = (now - service.last_reset_time).num_seconds().max(0);
-        let periods = (elapsed / interval_secs).max(1);
-        let new_last_reset =
-            service.last_reset_time + chrono::Duration::seconds(periods * interval_secs);
+    // 追赶计算与启动追赶共用 `catchup_last_reset`，避免两处算法漂移。
+    if let Some(new_last_reset) = service.catchup_last_reset(now) {
         return Decision::Reset { new_last_reset };
     }
 
@@ -170,6 +166,22 @@ pub fn run_tick(
     out
 }
 
+/// 启动追赶：在首个 tick 之前对加载后已过期（`now >= next_reset_at()`）的条目
+/// 执行多周期追赶，将 `last_reset_time` 推进到最近的未过期周期起点并重置运行时标志位，
+/// 但**不发送重置通知**（避免启动时逐条弹出"配额已重置"误报）。
+/// 返回 `true` 表示至少有一个条目被追赶（需触发持久化）。
+pub fn run_startup_catchup(state: &mut AppState, now: DateTime<Utc>) -> bool {
+    let mut caught_up = false;
+    for entry in state.services.iter_mut() {
+        if let Some(new_last_reset) = entry.catchup_last_reset(now) {
+            entry.last_reset_time = new_last_reset;
+            state.runtime.insert(entry.id, RuntimeFlags::default());
+            caught_up = true;
+        }
+    }
+    caught_up
+}
+
 /// 1s tick 引擎（Decision 3）：GPUI Executor 上 spawn 单任务循环。
 /// 每 tick：now=Utc::now()，调用 `run_tick`（C -> A -> B）；
 /// 通过 model.update 刷新 UI，重置后异步保存；通知失败写入日志并 Toast，不中断 tick。
@@ -181,6 +193,8 @@ pub fn spawn_timer(
     mut on_error: impl FnMut(String, &mut App) + 'static,
 ) -> Task<()> {
     cx.spawn(async move |async_cx| {
+        // 启动追赶仅在首 tick 前执行一次（局部变量，重启后自然重置）。
+        let mut first = true;
         loop {
             // 1s 间隔；gpui 后台执行器定时器，不阻塞渲染线程。
             async_cx
@@ -191,10 +205,18 @@ pub fn spawn_timer(
             let mut outcome = TickOutcome::default();
             async_cx.update(|cx| {
                 app_state.update(cx, |state, s_cx| {
-                    outcome = run_tick(state, Utc::now(), notifier.as_ref());
+                    let now = Utc::now();
+                    // 首 tick 先追赶：过期条目滚动到当前周期起点、重置标志位，但不发重置通知
+                    // （避免启动时逐条"配额已重置"误报）；之后进入正常 tick，运行期到期照常通知。
+                    let mut caught_up = false;
+                    if first {
+                        first = false;
+                        caught_up = run_startup_catchup(state, now);
+                    }
+                    outcome = run_tick(state, now, notifier.as_ref());
                     // 每 tick 都 notify：倒计时文本需每秒刷新
                     s_cx.notify();
-                    if outcome.reset_happened {
+                    if caught_up || outcome.reset_happened {
                         let snapshot = state.to_persisted();
                         s_cx.spawn(async move |_, _| {
                             if let Err(e) = crate::persistence::save(&snapshot) {
@@ -371,6 +393,85 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // 启动追赶：过期条目滚动对齐并重置标志位，且不发通知
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn startup_catchup_rolls_expired_entries_and_resets_flags() {
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
+        let e1 = entry(5.0, 60, 5, false);
+        let e2 = entry(5.0, 60, 5, false);
+        // 未过期的条目：last_reset = t0+8h → next_reset = t0+13h
+        let fresh = ServiceEntry {
+            last_reset_time: t0 + chrono::Duration::hours(8),
+            ..entry(5.0, 60, 5, false)
+        };
+        let (id1, id2, fresh_id) = (e1.id, e2.id, fresh.id);
+        let mut st = AppState::from_persisted(PersistedState {
+            services: vec![e1, e2, fresh],
+            global_notifications_enabled: true,
+            ..Default::default()
+        });
+        // 预置运行时标志位（模拟上一周期遗留状态）
+        for id in [id1, id2, fresh_id] {
+            st.runtime.insert(
+                id,
+                RuntimeFlags {
+                    first_alert_sent: true,
+                    last_alert_at: Some(t0),
+                },
+            );
+        }
+
+        // now = t0 + 11h30m：e1/e2 已过期 2 个周期；fresh 尚未过期
+        let now = t0 + chrono::Duration::minutes(11 * 60 + 30);
+        assert!(run_startup_catchup(&mut st, now));
+
+        // 过期条目：last_reset_time 对齐到最近未过期周期起点（t0+10h）
+        for id in [id1, id2] {
+            let e = st.services.iter().find(|s| s.id == id).unwrap();
+            assert_eq!(e.last_reset_time, t0 + chrono::Duration::hours(10));
+            let f = st.flags(id);
+            assert!(!f.first_alert_sent);
+            assert!(f.last_alert_at.is_none());
+        }
+
+        // 未过期条目：计时与标志位均保持不变
+        let fresh = st.services.iter().find(|s| s.id == fresh_id).unwrap();
+        assert_eq!(fresh.last_reset_time, t0 + chrono::Duration::hours(8));
+        assert!(st.flags(fresh_id).first_alert_sent);
+    }
+
+    #[test]
+    fn startup_catchup_leaves_unexpired_entries_untouched() {
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
+        let e = entry(5.0, 60, 5, false);
+        let id = e.id;
+        let mut st = state_with(e, true);
+        st.runtime.insert(
+            id,
+            RuntimeFlags {
+                first_alert_sent: true,
+                last_alert_at: Some(t0),
+            },
+        );
+
+        // 剩余 3h → 未过期，无需追赶
+        assert!(!run_startup_catchup(
+            &mut st,
+            t0 + chrono::Duration::hours(2)
+        ));
+        assert_eq!(st.services[0].last_reset_time, t0);
+        assert!(st.flags(id).first_alert_sent);
+    }
+
+    #[test]
+    fn startup_catchup_without_services_returns_false() {
+        let mut st = AppState::default();
+        assert!(!run_startup_catchup(&mut st, Utc::now()));
+    }
+
+    // ------------------------------------------------------------------
     // 8.1 集成测试：启动加载 → tick → 通知 → 重置滚动（内存态端到端，
     // 注入 MockNotificationService 与固定 now，无需真实 sleep）
     // ------------------------------------------------------------------
@@ -382,6 +483,7 @@ mod tests {
         AppState::from_persisted(PersistedState {
             services: vec![e],
             global_notifications_enabled: global,
+            ..Default::default()
         })
     }
 

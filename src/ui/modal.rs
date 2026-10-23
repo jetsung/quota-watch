@@ -1,4 +1,5 @@
 use crate::models::{self, AppState, ServiceEntry};
+use crate::ui::RootView;
 use crate::ui::checkbox::render_checkbox;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use gpui_kit::base::{h_flex, v_flex};
@@ -6,18 +7,15 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, Focusable as _, FontWeight, IntoElement, ParentElement,
+    AnyElement, App, ClickEvent, Context, Entity, Focusable as _, IntoElement, ParentElement,
     Render, SharedString, Window, div, px,
 };
 use uuid::Uuid;
 
 const LAST_RESET_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-
-/// 保存成功 Toast 的 id 标记：用于应用侧定时提前移除（库内自动关闭写死 5s）。
-struct SaveTip;
 
 /// Add/Edit 共用的表单视图。
 /// 字段：service_name / interval_hours /（NextReset 或 Countdown 模式的重置时间输入）/
@@ -26,6 +24,8 @@ struct SaveTip;
 /// 任意输入框内按回车等同点击"保存"。编辑预填充；关键计时字段变更由 `AppState::update` 自动重置 RuntimeFlags。
 pub struct AddEditView {
     state: Entity<AppState>,
+    /// 首页根视图：保存结果通过其居中浮层提示。
+    host: Entity<RootView>,
     /// 自绘标题栏的标题文字（编辑服务：xxx / 添加服务）。
     title: String,
     editing: Option<ServiceEntry>,
@@ -85,6 +85,7 @@ impl AddEditView {
         window: &mut Window,
         cx: &mut Context<Self>,
         state: Entity<AppState>,
+        host: Entity<RootView>,
         editing: Option<ServiceEntry>,
         title: String,
     ) -> Self {
@@ -136,6 +137,7 @@ impl AddEditView {
 
         let view = Self {
             state,
+            host,
             title,
             reset_config_mode: initial_mode,
             editing,
@@ -353,7 +355,7 @@ impl AddEditView {
             reset_config_mode: self.reset_config_mode,
             url,
         };
-        let handle = window.window_handle();
+        let entity = cx.entity();
         let result = models::mutate(
             &state,
             cx,
@@ -365,11 +367,14 @@ impl AddEditView {
                 }
             },
             move |msg, app| {
-                handle
-                    .update(app, |_, win, app| {
-                        win.push_notification(Notification::error(msg), app);
-                    })
-                    .ok();
+                // 弹窗未关闭时内联展示错误；defer 避免在本实体更新过程中重入
+                let entity = entity.clone();
+                app.defer(move |cx| {
+                    entity.update(cx, |this, cx| {
+                        this.error = Some(msg.into());
+                        cx.notify();
+                    });
+                });
             },
         );
 
@@ -379,39 +384,16 @@ impl AddEditView {
             } else {
                 "已添加服务"
             };
-            // 背景：比"正常"徽章绿色（#088f4e）更浅的绿；文字黑色加粗
-            let green_bg: gpui_kit::Hsla = gpui_kit::rgb(0x3cb371).into();
-            let black_fg: gpui_kit::Hsla = gpui_kit::rgb(0x000000).into();
-            window.push_notification(
-                Notification::success(msg)
-                    .text_center()
-                    .bg(green_bg)
-                    .text_color(black_fg)
-                    .font_weight(FontWeight::BOLD)
-                    .id::<SaveTip>(),
-                cx,
-            );
-            // 库内 Toast 自动关闭写死 5s，这里应用侧 2s 定时提前移除
-            let tip_handle = handle;
-            cx.spawn(async move |_, async_cx| {
-                async_cx
-                    .background_executor()
-                    .timer(std::time::Duration::from_secs(2))
-                    .await;
-                async_cx.update(|cx| {
-                    tip_handle
-                        .update(cx, |_, win, app| win.remove_notification::<SaveTip>(app))
-                        .ok();
-                });
-            })
-            .detach();
+            self.host.update(cx, |root, cx| root.show_toast(msg, cx));
             window.close_all_dialogs(cx);
         }
     }
 }
 
 impl Render for AddEditView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_height = window.bounds().size.height;
+        let compact = window_height < px(720.);
         let theme = cx.theme().clone();
         // 自绘标题栏：标题居左、关闭按钮✕居右（替代库 Dialog 自带的 title/X）
         let title_bar = h_flex()
@@ -437,11 +419,9 @@ impl Render for AddEditView {
                     }))
                     .child("✕"),
             );
-        v_flex()
-            .w_full()
-            .p_4()
-            .gap_3()
-            .child(title_bar)
+        // 字段区独立滚动，操作按钮固定在底部，保证矮窗口下仍可点击
+        let fields = v_flex()
+            .gap_2()
             .child(
                 v_flex()
                     .gap_1()
@@ -544,9 +524,31 @@ impl Render for AddEditView {
                         .text_color(cx.theme().danger)
                         .child(err),
                 )
-            })
+            });
+
+        // 矮窗口下字段区固定高度并滚动，底部按钮保留在可视区内
+        let fields: AnyElement = if compact {
+            // 208 = 对话框上下留白 + 标题/操作栏/间距/内边距；
+            // 外层固定高度用于约束 Scrollable 的 size_full 根节点
+            div()
+                .w_full()
+                .h(window_height - px(208.))
+                .flex_shrink_0()
+                .child(fields.overflow_y_scrollbar())
+                .into_any_element()
+        } else {
+            fields.into_any_element()
+        };
+
+        v_flex()
+            .w_full()
+            .p_3()
+            .gap_2()
+            .child(title_bar.flex_shrink_0())
+            .child(fields)
             .child(
                 h_flex()
+                    .flex_shrink_0()
                     .justify_end()
                     .gap_2()
                     .child(

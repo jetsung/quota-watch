@@ -131,7 +131,7 @@ pub fn render_service_card(
     )
     .child(
         div()
-            .text_size(px(12.))
+            .text_size(px(14.))
             .font_weight(gpui_kit::FontWeight::BOLD)
             .child(format!("下次重置: {}", next_local)),
     )

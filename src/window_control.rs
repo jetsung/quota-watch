@@ -191,6 +191,7 @@ pub fn restore_from_tray(window: &Window) {
 /// 不使用 WM 的 Toggle 语义：实测 xfwm4 在窗口经历隐藏/恢复循环后，其内部
 /// 最大化缓存会失同步，Toggle 会紊乱或无效；而显式 add/remove 始终可靠。
 /// 非 Linux 或无 X11 句柄（Wayland）时回退 gpui 自带的 zoom。
+#[cfg(not(target_os = "windows"))]
 pub fn toggle_maximize(window: &Window) {
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
     {
