@@ -4,6 +4,7 @@
     windows_subsystem = "windows"
 )]
 
+#[cfg(all(target_os = "linux", not(target_os = "android")))]
 mod kwin;
 mod models;
 mod notifications;

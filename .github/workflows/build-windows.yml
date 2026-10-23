@@ -46,18 +46,9 @@ jobs:
         run: |
           $b = [IO.File]::ReadAllBytes('target/x86_64-pc-windows-msvc/release/quota-watch.exe')
           $pe = [BitConverter]::ToInt32($b, 60)
-          Write-Host "e_lfanew = $pe"
-          Write-Host "PE signature = $([System.Text.Encoding]::ASCII.GetString($b[$pe..($pe+3)]))"
-          $magic = [BitConverter]::ToUInt16($b, $pe + 24)
-          Write-Host ("Optional Header Magic = 0x{0:X} ({1})" -f $magic, $(if ($magic -eq 0x20B) { 'PE32+' } elseif ($magic -eq 0x10B) { 'PE32' } else { 'Unknown' }))
           $sub = [BitConverter]::ToUInt16($b, $pe + 24 + 68)
-          Write-Host "Subsystem = $sub (2=GUI, 3=Console)"
-          # dump full Optional Header for diagnosis
-          Write-Host "--- Optional Header first 80 bytes (hex) ---"
-          $oh = $b[($pe + 24)..($pe + 24 + 79)]
-          $hex = ($oh | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
-          Write-Host $hex
-          if ($sub -ne 2) { Write-Host "::warning::Subsystem is $sub, expected 2 (GUI)" }
+          if ($sub -ne 2) { throw "quota-watch.exe Subsystem expected 2 (Windows GUI), got $sub" }
+          Write-Host "Subsystem OK: Windows GUI (2)"
       - name: Create release zip
         shell: bash
         run: |
