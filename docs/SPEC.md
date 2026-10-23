@@ -31,9 +31,9 @@ src/
 ## 2. 命令行接口
 
 - `version`：打印 `quota-watch <版本号>` 后退出，不启动 GUI（供包管理器核对）。Windows Release（GUI 子系统）无控制台时自动附加父进程控制台（`win32::attach_parent_console`）。
-- `self-update`：检查 GitHub Releases 最新版本，新版本时下载当前平台资产、解压并原子替换当前可执行文件，打印"升级成功，重启应用后生效"后退出。进度以 `\r` 原地刷新（下载百分比 → 解压 → 替换）。
+- `self-update`：检查 GitHub Releases 最新版本；已是最新时打印"已是最新版本 v<版本号>"并退出，不做下载；发现新版本时下载当前平台资产、解压并原子替换当前可执行文件，打印"升级成功，重启应用后生效"后退出；请求失败或找不到当前平台资产时打印失败原因并**以非零退出码退出**，不修改任何文件。进度以 `\r` 原地刷新（下载百分比 → 解压 → 替换）。
 - `help`：打印用法说明后退出。
-- 不带子命令（或未知参数）：正常启动 GUI。
+- 不带子命令（或未知参数）：正常启动 GUI。旧的 `--version` / `-V` 标志已移除（BREAKING），不再打印版本号，按未知参数处理并启动 GUI。
 
 ## 3. 数据模型（models.rs）
 
@@ -142,7 +142,7 @@ src/
 
 ### 7.1 窗口（main.rs / ui/mod.rs）
 
-- 请求宽度 **445px**、初始高度 **680px**（实际观测窗口约 **400×640**），最小 **445×680**，无上限。
+- 请求宽度 **445px**、初始高度 **680px**，最小 **445×680**，无上限。
 - 矮窗口（< 720px）下"新建/编辑"对话框字段区滚动、操作按钮固定可见。
 - **自绘标题栏**（Client 装饰，无系统标题栏）。
 - X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=445，高度 [680, 16384]），避免被 gpui-fast 后端覆盖。
@@ -286,7 +286,7 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - `check_latest()`：请求 GitHub Releases `latest` API，返回 `ReleaseInfo { version, assets }`（`version` 去 `v` 前缀；`assets` 为 `Vec<Asset { name, download_url }>`，对应 API 的 `assets` 数组项 `name` + `browser_download_url`）。调试时可设环境变量 `QUOTA_WATCH_RELEASES_API` 指向本地 Mock 服务器。
 - `is_newer(latest, current)`：**完整 semver 比较**。`version_key` 解析主版本段为 `(major, minor, patch)` 三级元组（去 `v` 前缀、按 `.` 分段、每段取 `-`/`+` 之前的数字，非数字记 0）；主版本段不同直接比较。**预发布段参与比较**：有预发布段（`-` 之后、`+` 之前）的版本小于同主版本段的正式版，预发布之间逐标识符比较（数字按数值、字母按字符串、数字 < 字母，标识符更多的一方更大）。如 `0.2.0-beta.2 > 0.2.0-beta.1`，`0.2.0 > 0.2.0-beta.1`，`0.3.0-alpha > 0.2.9`。
 - `select_platform_asset(assets)`：按编译期 `target_os` + `target_arch` 关键词匹配资产（文件名小写需同时包含 os 关键词——macOS 为 `darwin`——与 arch 关键词，且以平台压缩包格式结尾：Linux/macOS `.tar.xz`、Windows `.zip`），返回第一个匹配项；deb/rpm/SHA256SUMS 等非压缩包资产被扩展名过滤排除。
-- `self_update_with_progress(is_cancelled, on_progress)`：完整自升级流程——`check_latest()` → `is_newer()` 比较（已是最新返回 `UpdateOutcome::AlreadyUpToDate`）→ `select_platform_asset()` 匹配 → `reqwest::blocking` 下载到临时文件（600s 超时，64KB 分块读写，`Content-Length` 计算百分比）→ `extract_binary` 解压（tar.xz 取包内 `quota-watch`，zip 取 `.exe`）→ 暂存到 exe 同目录（跨文件系统 rename 会 EXDEV，先 copy 落地同文件系统）→ 设可执行权限（Unix `0o755`）→ 原子替换（Linux 直接 `rename` 覆盖运行中二进制；Windows 先 rename 旧文件为 `.old` 腾路径，失败回滚）。`is_cancelled` 在每个阶段边界轮询，返回 true 时以 `UpdateCancelled` 中止并清理临时文件。`on_progress` 回调报告 `UpdateProgress::Downloading` / `Extracting` / `Replacing`。
+- `self_update_with_progress(is_cancelled, on_progress)`：完整自升级流程——`check_latest()` → `is_newer()` 比较（已是最新返回 `UpdateOutcome::AlreadyUpToDate`）→ `select_platform_asset()` 匹配 → `reqwest::blocking` 下载到临时文件（600s 超时，64KB 分块读写，`Content-Length` 计算百分比）→ `extract_binary` 解压（tar.xz 取包内 `quota-watch`，zip 取 `.exe`）→ 暂存到 exe 同目录（跨文件系统 rename 会 EXDEV，先 copy 落地同文件系统）→ 设可执行权限（Unix `0o755`）→ 原子替换（Linux 直接 `rename` 覆盖运行中二进制；Windows 先 rename 旧文件为 `.old` 腾路径，失败回滚，遗留的 `.old` 在下次升级开始时清理）。`is_cancelled` 在每个阶段边界轮询，返回 true 时以 `UpdateCancelled` 中止并清理临时文件。`on_progress` 回调报告 `UpdateProgress::Downloading` / `Extracting` / `Replacing`。
 - `current_exe_path()`：规范化当前可执行文件路径，剥离 Linux 升级替换后 `/proc/self/exe` 带的 ` (deleted)` 后缀。
 - `UpdateOutcome`：`AlreadyUpToDate`（已是最新） / `Updated`（已替换，重启后生效）。
 - 常量：`REPO_URL`（仓库主页）、`ISSUES_URL`（`issues/new` 问题反馈页）、`CURRENT_VERSION`（`CARGO_PKG_VERSION`）。
