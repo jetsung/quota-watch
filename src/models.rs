@@ -190,6 +190,23 @@ impl ServiceEntry {
     pub fn time_until_reset(&self, now: DateTime<Utc>) -> chrono::Duration {
         self.next_reset_at() - now
     }
+
+    /// 多周期追赶：当 `now >= next_reset_at()` 时，按 `elapsed / interval_secs`
+    /// 计算推进后的 `last_reset_time`（对齐到最近未过期的周期起点而非 now，避免漂移），
+    /// 与 `decide()` Condition C 使用同一算法；未过期返回 None。
+    pub fn catchup_last_reset(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        if now < self.next_reset_at() {
+            return None;
+        }
+        let interval_secs = (self.interval_hours * 3600.0).round() as i64;
+        if interval_secs <= 0 {
+            // validate() 已拒绝非正间隔；此处防御以避开除零 panic。
+            return None;
+        }
+        let elapsed = (now - self.last_reset_time).num_seconds().max(0);
+        let periods = (elapsed / interval_secs).max(1);
+        Some(self.last_reset_time + chrono::Duration::seconds(periods * interval_secs))
+    }
 }
 
 /// 每条服务的运行时标志位（不持久化，重启后重算）。
