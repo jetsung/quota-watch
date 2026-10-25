@@ -171,12 +171,14 @@ pub fn restore_from_tray(window: &Window) {
             return;
         }
         if let Some(window_id) = x11_window_id(window) {
-            // 顺序关键：必须先清除 SKIP_TASKBAR，再取消最小化/激活。
-            // 实测 xfwm4 下若带着该状态位激活、之后再移除，其内部最大化
-            // 缓存会失同步，导致随后的最大化切换（Toggle）紊乱或无效。
+            // 顺序关键：必须先取消最小化/激活（窗口回到 Normal），再清除 SKIP_TASKBAR。
+            // 实测 XFCE/xfwm4 下面板任务栏在"窗口仍处 iconic 时移除 skip_taskbar"
+            // 的组合下会出现任务栏按钮重复创建（每次恢复循环按钮数翻倍）的缓存
+            // 失同步；且旧版"清 skip 前置"的理由（xfwm4 最大化 Toggle 缓存失同步）
+            // 已随最大化交还系统标题栏（toggle_maximize 退役）不再成立。
             let epoch = skip_epoch_next();
-            clear_skip_taskbar_sync(window_id);
             x11_restore(window_id);
+            clear_skip_taskbar_sync(window_id);
             // 兜底：若同步清除未生效，继续后台校验重试（epoch 已更新，
             // 旧 hide 重试线程会让位）
             ensure_skip_taskbar(window_id, false, epoch);
@@ -184,34 +186,6 @@ pub fn restore_from_tray(window: &Window) {
     }
     window.activate_window();
     window.request_attention();
-}
-
-/// 最大化 / 还原：显式设置（而非切换）`_NET_WM_STATE_MAXIMIZED_VERT/HORZ`。
-///
-/// 不使用 WM 的 Toggle 语义：实测 xfwm4 在窗口经历隐藏/恢复循环后，其内部
-/// 最大化缓存会失同步，Toggle 会紊乱或无效；而显式 add/remove 始终可靠。
-/// 非 Linux 或无 X11 句柄（Wayland）时回退 gpui 自带的 zoom。
-#[cfg(not(target_os = "windows"))]
-pub fn toggle_maximize(window: &Window) {
-    #[cfg(all(target_os = "linux", not(target_os = "android")))]
-    {
-        if let Some(window_id) = x11_window_id(window) {
-            let maximized = net_wm_state_has_atom(window_id, b"_NET_WM_STATE_MAXIMIZED_VERT")
-                || net_wm_state_has_atom(window_id, b"_NET_WM_STATE_MAXIMIZED_HORZ");
-            let action = if maximized { "remove" } else { "add" };
-            let _ = std::process::Command::new("wmctrl")
-                .args([
-                    "-i",
-                    "-r",
-                    &format!("{window_id:#x}"),
-                    "-b",
-                    &format!("{action},maximized_vert,maximized_horz"),
-                ])
-                .status();
-            return;
-        }
-    }
-    window.zoom_window();
 }
 
 /// 从窗口句柄提取 X11 window id（Xlib / Xcb 两种后端）。

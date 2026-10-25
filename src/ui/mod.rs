@@ -1,11 +1,10 @@
 mod checkbox;
-mod footer;
+mod header;
 mod modal;
 mod service_card;
 mod service_list;
 mod settings;
 pub mod statusbar;
-pub mod titlebar;
 pub(crate) mod toast;
 
 pub use modal::AddEditView;
@@ -23,7 +22,7 @@ use gpui_kit::{
 use std::rc::Rc;
 use uuid::Uuid;
 
-/// RootView（6.1）：读取 `Entity<AppState>`，组合 Header + ServiceList + Footer，
+/// RootView（6.1）：读取 `Entity<AppState>`，组合 Header + ServiceList + 状态栏，
 /// 处理空状态占位与引导；承载 Add/Edit Modal、删除确认与全局开关交互。
 pub struct RootView {
     state: Entity<AppState>,
@@ -344,28 +343,21 @@ impl Render for RootView {
             cx,
         );
 
-        // Footer：仅"新建服务"按钮（通知开关已迁移至设置面板）
-        let footer = footer::render_footer(
-            cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.open_add_edit(None, window, cx);
-            }),
-            cx,
-        );
-
         let toast_state = self.toast.clone();
 
         v_flex()
             .relative()
             .size_full()
-            .child(titlebar::render_titlebar(
-                window,
+            // 三平台统一：系统标题栏负责窗口控制，内容区顶部 Header 承载设置与新建服务入口。
+            .child(header::render_header(
                 cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_settings(window, cx);
                 }),
-                cx,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.open_add_edit(None, window, cx);
+                }),
             ))
             .child(list)
-            .child(footer)
             .child(statusbar::render_statusbar(cx))
             .when(has_active_dialog, |el| {
                 el.child(

@@ -18,9 +18,8 @@ src/
 ├── win32.rs          # Windows 平台适配
 └── ui/
     ├── mod.rs        # RootView：布局组合、对话框、删除确认、设置入口、窗口关闭拦截
-    ├── titlebar.rs   # 自绘标题栏、窗口控制键与设置按钮
+    ├── header.rs     # 顶部工具栏：设置 / 新建服务
     ├── service_list.rs / service_card.rs  # 服务列表（响应式分列）与卡片
-    ├── footer.rs     # 新建服务按钮（全局通知开关已迁至设置面板）
     ├── statusbar.rs  # 版本号 + 版权信息
     ├── modal.rs      # Add/Edit 表单（模式切换、回车保存）
     ├── settings.rs   # 设置对话框（桌面通知 / 备份与恢复 / 导入与导出 / 关于）
@@ -88,7 +87,7 @@ src/
 
 ## 4. 持久化（persistence.rs）
 
-- **路径**：`directories::ProjectDirs::from("cn", "gcli", "quota-watch")` 的 config 目录 + `config.json`；回退 `$HOME/.config/quota-watch/config.json`（macOS 即 `~/Library/Application Support/cn.gcli.quota-watch/config.json`）。导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名（`quota-watch_<时间戳>.json`），仅本地文件名为 `config.json`。
+- **路径**（按平台解析）：Linux `$HOME/.config/quota-watch/config.json`；macOS 经 `directories::ProjectDirs::from("cn", "gcli", "quota-watch")` 的 config 目录，即 `~/Library/Application Support/cn.gcli.quota-watch/config.json`；Windows 直接由 `%APPDATA%` 构造为 `%APPDATA%\quota-watch\config.json`（**不经** `ProjectDirs::config_dir()`，避免 `%APPDATA%\gcli\quota-watch\config\` 多层路径；`APPDATA` 缺失时回退 `$HOME/.config/quota-watch/config.json`，不 panic）。标准路径无法解析时统一回退 `$HOME/.config/quota-watch/config.json`。导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名（`quota-watch_<时间戳>.json`），仅本地文件名为 `config.json`。不做旧路径/旧文件名迁移：Windows 旧路径 `%APPDATA%\gcli\quota-watch\config\config.json` 及其他平台的 `quota-notifier` 目录、`services.json`、`quota-watch.json` 均被忽略，不读取、不删除、不改写。
 - **加载 `load()`**：
   - 文件不存在 → 默认空状态，无告警。
   - 解析成功 → 返回状态。
@@ -142,34 +141,36 @@ src/
 
 ## 7. UI 功能
 
+- **全局字重规范（"最少粗体"策略）**：除保留项外，所有 UI 文本（按钮文字、状态徽章、对话框标题与子标题、表单字段标签与模式切换标签、选项卡选中态、section 标题、错误文本、空状态占位文案、Toast 文字、复选框勾号与标签）均使用常规字重。保留 `BOLD` 的元素仅限：主窗体服务卡片的服务名（含置顶前缀）与倒计时数字；设置窗体标题的"设置"二字；设置窗体"关于"选项卡的软件标题"配额重置提醒"；服务卡片"下次重置："行的标签部分（时间值为常规字重）。字号、颜色、间距、布局等其他视觉属性不受此策略约束。
+
 ### 7.1 窗口（main.rs / ui/mod.rs）
 
 - 请求宽度 **445px**、初始高度 **680px**，最小 **445×680**，无上限。
 - 矮窗口（< 720px）下"新建/编辑"对话框字段区滚动、操作按钮固定可见。
-- **自绘标题栏**（Client 装饰，无系统标题栏）。
-- X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=445，高度 [680, 16384]），避免被 gpui-fast 后端覆盖。
+- **系统标题栏**（三平台统一，不设置 `window_decorations`，默认 Server 装饰）：拖动、最大化/还原/关闭均由系统标题栏提供；无自绘标题栏，不存在双层外壳。
+- X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=445，高度 [680, 16384]），避免被 gpui-fast 后端覆盖；高度方向可调，与系统标题栏最大化不冲突。
 - `app_id = "quota-watch"`（Wayland/KWin 托盘脚本按 resourceClass 匹配）。
 - **关闭拦截**：`on_window_should_close` 阻止真正关闭，改为"最小化到托盘"（`window_control::hide_to_tray`：最小化 + 隐藏任务栏图标，KWin 优先、X11/EWMH 回退，进程常驻托盘）。
 
-### 7.2 自绘标题栏（titlebar.rs）
+### 7.2 Header 工具栏（header.rs）
 
-高 36px，左区应用图标（内联 SVG）+ 软件名"配额重置提醒"；空白区左键拖动移动窗口（双击不最大化）；按钮区拦截按下事件防止误拖动。右区按钮（图标均为内联 SVG）：设置（菜单图标，打开设置对话框，见 7.10）、最小化、最大化/还原、关闭：
+内容区顶部三平台一致渲染的工具栏，承载原自绘标题栏迁移出的应用内入口（系统标题栏不承载设置入口）：
 
-- **设置**：`on_settings` 回调打开 `SettingsView` 对话框（`window.open_dialog`）。
-- **最小化**：`minimize_window()`。
-- **最大化/还原**：`window_control::toggle_maximize` 显式设置 `_NET_WM_STATE_MAXIMIZED_*`（不依赖 WM 的 Toggle 语义——实测 xfwm4 在隐藏/恢复循环后 Toggle 状态缓存会失同步）；无 X11 句柄时回退 `zoom_window()`。
-- **关闭**：等同"最小化到托盘"，调 `window_control::hide_to_tray`（与关闭拦截同一入口）；hover 红 danger 色。
+- **设置**（左侧）：三条横线内联 SVG 图标按钮（ghost 样式，Tooltip 与无障碍标签均为"设置"），点击打开 `SettingsView` 对话框（`window.open_dialog`，见 7.10）。
+- **新建服务**（右侧）：主色 primary 按钮，点击打开 Add/Edit 对话框（见 7.8）。
+
+窗口控制（最小化 / 最大化 / 还原 / 关闭 / 拖动移动）由各平台系统标题栏提供，应用不再软件实现；关闭按钮行为经 `on_window_should_close` 拦截为"最小化到托盘"（见 7.1）。
 
 ### 7.3 服务列表（service_list.rs）
 
 - **复合排序**（`compare_entries`）：置顶条目（`is_pinned`）整体排前，置顶区内按 `pinned_at` **倒序**（后置顶者在前，`None` 因数据损坏回退为最末置顶位）；未置顶条目按 `next_reset_at` **升序**，不参与置顶区排序。
 - **置顶跟随滚动**：勾选置顶成功后列表滚动位置回顶（RootView 持有 `ScrollHandle`，经 `track_scroll` 绑定列表容器；取消置顶不动滚动位置）。
 - **响应式分列**：可用宽度（视口宽 - 32px 内边距）能容纳多少张最小宽度 340px 的卡片（列间距 12px）就分几列，无上限，至少 1 列；多列时卡片等宽伸缩，手动分行组成网格。
-- **空状态**：🕐 图标 + "暂无服务" + "点击右下角 '新建服务' 添加第一个服务"。
+- **空状态**：🕐 图标 + "暂无服务" + "点击顶部 '新建服务' 添加第一个服务"。
 
 ### 7.4 服务卡片（service_card.rs）
 
-每张卡片包含：服务名（18px 粗体，**置顶条目前置 📌 图钉**）、状态徽章（14px 白色粗体 + 纯色背景）、28px 粗体倒计时、"下次重置: <本地时区 YYYY-MM-DD HH:MM:SS>"、静音/置顶勾选框、编辑/删除按钮。勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
+每张卡片包含：服务名（18px 粗体，**置顶条目前置 📌 图钉**）、状态徽章（14px 白色常规字重 + 纯色背景）、28px 粗体倒计时、"下次重置: "（标签粗体 + 时间值常规字重，本地时区 YYYY-MM-DD HH:MM:SS）、静音/置顶勾选框、编辑/删除按钮。勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
 
 - **状态徽章**（按剩余时间 vs 阈值）：
 
@@ -183,11 +184,12 @@ src/
 - **URL 交互**：配置了 `url` 的条目，卡片标题变主题色可点击，`open_url` 在系统浏览器打开；未配置则纯文本。
 - **置顶**：卡片底部操作行"静音重复提醒"旁新增"置顶"勾选框（`pin-{id}`），经 `mutate → toggle_pin` 持久化并即时重排列表，成功 Toast"已置顶/已取消置顶 <服务名>"；编辑表单不暴露置顶字段，编辑提交沿用旧条目置顶值。
 - **右键**：卡片任意位置右键 = 删除确认（与删除按钮等效）。
+- **字重分层**："最少粗体"策略下的保留粗体项仅为服务名（含置顶前缀）与倒计时数字，"下次重置: "行仅标签部分加粗、时间值常规字重；状态徽章文字与操作按钮文字均使用常规字重。
 - 纯函数渲染（RenderOnce 语义），每 tick 仅倒计时文本变化。
 
-### 7.5 Footer（footer.rs）
+### 7.5 Footer（已移除）
 
-仅保留主色"新建服务"按钮（右侧）。全局通知开关已从 Footer 迁移至设置面板"桌面通知"标签（见 7.10）。
+原 Footer 的"新建服务"按钮已迁移至顶部 Header 工具栏（见 7.2），Footer 整体从 `RootView::render` 移除（`footer.rs` 已删除）。
 
 ### 7.6 状态栏（statusbar.rs）
 
@@ -195,12 +197,12 @@ src/
 
 ### 7.7 勾选框（checkbox.rs）
 
-自定义实现（gpui-kit 勾选图标无法定制为字符）：14px 圆角方框（贴近 13px 标签文字高度），未勾选 = 前景色 45% 透明度边框（input/border 色与灰色卡片背景过于接近，视觉不直观）；勾选 = 主色背景 + 主色边框 + 白色粗体"✓"（11px）。框与文字间距 4px（`gap_1`），行高与字号相等保证框与文字垂直居中；点击切换并回调新值。标签字号默认 13px，支持传入自定义字号。
+自定义实现（gpui-kit 勾选图标无法定制为字符）：14px 圆角方框（贴近 13px 标签文字高度），未勾选 = 前景色 45% 透明度边框（input/border 色与灰色卡片背景过于接近，视觉不直观）；勾选 = 主色背景 + 主色边框 + 白色常规字重"✓"（11px）。框与文字间距 4px（`gap_1`），行高与字号相等保证框与文字垂直居中；点击切换并回调新值。标签字号默认 13px，支持传入自定义字号。
 
 ### 7.8 Add/Edit 表单（modal.rs）
 
 - **对话框构造约束**：`AddEditView` 实体在 `open_dialog` **之前**创建，builder 仅引用句柄（builder 重建时不会新建实体）；初始焦点 guard（`Cell<bool>`）保证仅首次构建时聚焦服务名输入框。
-- **标题与提示样式**：对话框标题 17px 粗体，视觉层级高于字段标签；保存成功 Toast 文字居中。
+- **标题与提示样式**：对话框标题 17px 常规字重；字段标签与错误文本亦为常规字重；保存成功 Toast 文字居中。
 - **字段**：服务名、重置间隔（支持表达式）、URL（可选）、下次重置时间 或 时/分/秒倒计时（随模式切换）、提醒阈值（分钟）、周期提醒间隔（分钟）、静音（勾选框）。
 - **默认值**：新建时间隔 `5`、阈值 `60`、周期 `5`、下次重置 = now + 5h。
 - **编辑预填**：间隔 `%.2` 格式；下次重置 = 当前 `next_reset_at` 本地时区格式化；倒计时 = 距下次重置的 HH:MM:SS。
@@ -220,12 +222,12 @@ src/
 
 ### 7.10 设置对话框（settings.rs）
 
-标题栏设置按钮打开，对话框内左侧竖排标签列 + 右侧内容区，共四个标签：**桌面通知 / 备份与恢复 / 导入与导出 / 关于**。
+Header 工具栏"设置"按钮打开，对话框内左侧竖排标签列 + 右侧内容区，共四个标签：**桌面通知 / 备份与恢复 / 导入与导出 / 关于**。
 
 - **光标约定**：页内所有可点击按钮统一 `cursor_pointer()` 手型光标（组件库默认按钮为系统箭头，经 `pointer_button` 助手覆盖）；对话框内部的"取消/确定"按钮由组件库渲染，不受此约束。
 - **桌面通知**：说明文字 + "启用桌面通知"勾选框（13px 标签），变更即经 `mutate` 持久化全局开关。
 - **备份与恢复**：
-  - WebDAV 连接配置四字段：服务器地址、用户名、密码（**掩码输入框**，不回显明文）、远程目录；"保存连接配置"（粗体）+"测试"（small）按钮一行居中。**远程目录置空时保存/使用均回填默认值 `/quota-watch`**（项目专属子目录，避免与其它项目混在同一云端目录）。
+  - WebDAV 连接配置四字段：服务器地址、用户名、密码（**掩码输入框**，不回显明文）、远程目录；"保存连接配置"（常规字重）+"测试"（small）按钮一行居中。**远程目录置空时保存/使用均回填默认值 `/quota-watch`**（项目专属子目录，避免与其它项目混在同一云端目录）。
   - "上传当前配置"（primary 整行）与"查看云端列表"（整行）两个操作按钮。
   - 云端列表：条目紧凑排布（`px_2 py_1`、行距 `gap_1`），每条目显示文件名 + 修改时间，右侧"恢复""删除"两个 **无边框文字按钮**（`xsmall` + `ghost` 样式，`10px` 字号；删除按钮带 `danger` 色调）；空列表提示"云端无配置文件"**整行居中**（12px muted）。
   - 恢复/删除均需居中确认框（标题"恢复云端配置/删除云端配置"，文件名描述用 12px 小字号防折行）。
@@ -236,7 +238,7 @@ src/
 ### 7.11 居中提示框 Toast（toast.rs）
 
 - 全屏居中浮层（`toast_overlay`，`scrim` 参数区分两处）：`occlude()` 始终拦截下层指针事件——提示期间下层按钮不可点击、hover 不变手型/高亮/tooltip，仅提示横幅及其操作按钮可交互。**主窗体（`RootView`）传 `scrim=true`**：绘制半透明黑蒙板（alpha 0.35）压暗背景、突出提示横幅（主窗体卡片同为灰色，无蒙板时提示与条目背景混同，视觉不直观）；**设置页（`SettingsView`）传 `scrim=false`**：透明置顶，不压暗设置面板。
-- **横幅卡片样式（`toast_card`）**：主题 token 渲染——`popover` 表面色背景 + `border` 1px 边框 + `popover_foreground` 文字（15px 加重 SEMIBOLD、居中），`rounded_lg` 圆角、`shadow_lg` 较强阴影（顶层浮层 elevation），内边距 `px_4 py(14px)`，支持多行文案逐行渲染；与底层窗体（服务卡片浅灰、设置面板底色）明确区分，不撞色。
+- **横幅卡片样式（`toast_card`）**：主题 token 渲染——`popover` 表面色背景 + `border` 1px 边框 + `popover_foreground` 文字（15px 常规字重、居中），`rounded_lg` 圆角、`shadow_lg` 较强阴影（顶层浮层 elevation），内边距 `px_4 py(14px)`，支持多行文案逐行渲染；与底层窗体（服务卡片浅灰、设置面板底色）明确区分，不撞色。
 - 动效：淡入 + 上浮进入，2s 停留后 0.25s 淡出移除（库内 Toast 自动关闭写死 5s，故用自定义两段定时）。
 - 主窗口与设置对话框共用（`BottomToast` trait / `show_toast`）；连续提示以序号（`toast_seq`）防旧任务误清新提示。
 - **升级流程 Toast 变体**（`ToastState` 的 `action_upgrade` / `action_cancel` / `action_restart` 标志位驱动）：发现新版本 → 持久 Toast + "立即升级"/"关闭"按钮；升级中 → 持久进度 Toast + "取消"按钮；升级成功 → 持久 Toast + "立即重启"/"关闭"按钮。持久 Toast 不自动关闭，由操作完成或用户关闭移除。

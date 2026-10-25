@@ -13,12 +13,10 @@ use windows::Win32::Graphics::Gdi::{
     DeleteObject, HGDIOBJ, RGBQUAD,
 };
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateIconIndirect, GWL_EXSTYLE, GetWindowLongPtrW, HTCAPTION, ICON_BIG, ICON_SMALL, ICONINFO,
-    SW_HIDE, SW_MAXIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, SendMessageW, SetWindowLongPtrW, SetWindowPos, ShowWindowAsync,
-    WM_NCLBUTTONDOWN, WM_SETICON, WS_EX_TOOLWINDOW,
+    CreateIconIndirect, GWL_EXSTYLE, GetWindowLongPtrW, ICON_BIG, ICON_SMALL, ICONINFO, SW_HIDE,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
+    SetWindowLongPtrW, SetWindowPos, ShowWindowAsync, WM_SETICON, WS_EX_TOOLWINDOW,
 };
 
 /// 从 gpui 窗口取 HWND；取不到时返回 None（调用方静默降级，不崩溃）。
@@ -31,37 +29,6 @@ fn hwnd(window: &Window) -> Option<HWND> {
     {
         RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as isize as *mut _)),
         _ => None,
-    }
-}
-
-/// 最大化/还原切换：最大化时 `SW_RESTORE`（gpui 的 zoom 无还原路径），
-/// 窗口化时走 gpui `zoom_window()`（Windows 下即 `SW_MAXIMIZE`）。
-pub fn toggle_maximize(window: &Window) {
-    if window.is_maximized() {
-        if let Some(h) = hwnd(window) {
-            let _ = unsafe { ShowWindowAsync(h, SW_RESTORE) };
-        }
-    } else if let Some(h) = hwnd(window) {
-        let _ = unsafe { ShowWindowAsync(h, SW_MAXIMIZE) };
-    } else {
-        // HWND 取不到时退回 gpui 自带 zoom（等价 SW_MAXIMIZE）
-        window.zoom_window();
-    }
-}
-
-/// 自绘标题栏拖动：Win32 标准做法 `ReleaseCapture + WM_NCLBUTTONDOWN(HTCAPTION)`，
-/// 由系统接管拖拽（正确处理多显示器/DPI/任务栏边缘）。
-/// 最大化时按平台约定先还原再跟随拖动（同 Win+拖动标题栏的行为）。
-pub fn start_drag(window: &Window) {
-    let Some(h) = hwnd(window) else {
-        return;
-    };
-    if window.is_maximized() {
-        let _ = unsafe { ShowWindowAsync(h, SW_RESTORE) };
-    }
-    unsafe {
-        let _ = ReleaseCapture();
-        let _ = SendMessageW(h, WM_NCLBUTTONDOWN, WPARAM(HTCAPTION as usize), LPARAM(0));
     }
 }
 

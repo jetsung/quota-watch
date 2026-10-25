@@ -97,7 +97,7 @@ fn main() {
 
             // 窗口与 RootView 挂载：固定宽度 445px，默认高度 680px（最小 680px，无上限）。
             // 445×680 为请求尺寸，实际观测窗口约 400×640（X11 下存在约 40×40 的差值）。
-            // 自绘标题栏（Client 装饰）：移除系统标题栏，三键由软件绘制。
+            // 窗口装饰三平台统一使用系统标题栏（默认 Server），无自绘标题栏。
             let (handle, _root) = gpui_kit::open_window(
                 gpui_kit::WindowOptions {
                     // Windows：主显示器工作区居中（gpui 的 centered 取 work area，避开任务栏、DPI 归一）；
@@ -114,14 +114,13 @@ fn main() {
                     })),
                     // 最小尺寸 445×680：宽锁定 445，高度可向上调整
                     window_min_size: Some(gpui_kit::size(gpui_kit::px(445.), gpui_kit::px(680.))),
-                    // titlebar.title 用于设置 X11 的 WM_NAME/_NET_WM_NAME 与 Wayland 的窗口标题；
-                    // appears_transparent=false 且 Client 装饰下不会绘制系统标题栏，自绘标题栏不受影响
+                    // titlebar.title 用于设置 X11 的 WM_NAME/_NET_WM_NAME 与 Wayland 的窗口标题
                     titlebar: Some(gpui_kit::TitlebarOptions {
                         title: Some("Quota Watch".into()),
                         ..Default::default()
                     }),
-                    window_decorations: Some(gpui_kit::WindowDecorations::Client),
-                    app_owns_titlebar_drag: true,
+                    // 三平台统一使用系统标题栏：不设置 window_decorations（默认 Server），
+                    // 窗口拖动与最大化/还原/关闭均由系统标题栏处理。
                     // Wayland/KWin 下托盘脚本按 resourceClass 匹配窗口
                     app_id: Some("quota-watch".into()),
                     ..Default::default()
