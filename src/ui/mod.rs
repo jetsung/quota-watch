@@ -18,7 +18,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, ClickEvent, Context, Entity, IntoElement, MouseDownEvent, ParentElement, Render,
-    SharedString, Window, px,
+    ScrollHandle, SharedString, Window, point, px,
 };
 use std::rc::Rc;
 use uuid::Uuid;
@@ -29,6 +29,8 @@ pub struct RootView {
     state: Entity<AppState>,
     toast: Option<ToastState>,
     toast_seq: u64,
+    /// 服务列表滚动容器 handle：置顶后据此把列表滚回顶部。
+    list_scroll_handle: ScrollHandle,
 }
 
 impl RootView {
@@ -58,6 +60,7 @@ impl RootView {
             state,
             toast: None,
             toast_seq: 0,
+            list_scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -270,6 +273,39 @@ impl Render for RootView {
                         }
                     })
                 },
+                on_toggle_pin: {
+                    let state3 = state2.clone();
+                    let root = root_entity.clone();
+                    let name = entry
+                        .as_ref()
+                        .map(|x| x.service_name.clone())
+                        .unwrap_or_default();
+                    // ScrollHandle（Rc 内核）非 Send+Sync，不能被回调闭包捕获；
+                    // 经 root.update 在主线程回调内通过 view 访问
+                    Rc::new(move |pinned, _, app| {
+                        let pinned = *pinned;
+                        let name = name.clone();
+                        let result = models::mutate(&state3, app, move |s, _| s.toggle_pin(id), {
+                            let root = root.clone();
+                            move |msg, app| {
+                                root.update(app, |view, cx| view.show_toast(msg, cx));
+                            }
+                        });
+                        if result.is_some() {
+                            root.update(app, move |view, cx| {
+                                // 勾选置顶后条目已排至列表首位，滚动位置跟随回顶；
+                                // 取消置顶不动滚动位置
+                                if pinned {
+                                    view.list_scroll_handle.set_offset(point(px(0.), px(0.)));
+                                }
+                                view.show_toast(
+                                    format!("已{}置顶 {}", if pinned { "" } else { "取消" }, name),
+                                    cx,
+                                )
+                            });
+                        }
+                    })
+                },
                 on_edit: {
                     let e = entry.clone();
                     Rc::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -304,6 +340,7 @@ impl Render for RootView {
             &state,
             &make_actions,
             window.viewport_size().width.into(),
+            &self.list_scroll_handle,
             cx,
         );
 
@@ -345,7 +382,7 @@ impl Render for RootView {
                 )
             })
             .when_some(toast_state, |el, state| {
-                el.child(toast::toast_overlay(&state, None))
+                el.child(toast::toast_overlay(&state, None, true, cx))
             })
     }
 }

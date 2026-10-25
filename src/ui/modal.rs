@@ -344,6 +344,12 @@ impl AddEditView {
             .as_ref()
             .map(|e| e.id)
             .unwrap_or_else(Uuid::new_v4);
+        // 编辑提交沿用旧条目的置顶字段(置顶由卡片勾选操作,表单不暴露);新建默认未置顶
+        let (is_pinned, pinned_at) = self
+            .editing
+            .as_ref()
+            .map(|e| (e.is_pinned, e.pinned_at))
+            .unwrap_or((false, None));
         let entry = ServiceEntry {
             id,
             service_name: name,
@@ -354,6 +360,8 @@ impl AddEditView {
             is_muted: self.muted,
             reset_config_mode: self.reset_config_mode,
             url,
+            is_pinned,
+            pinned_at,
         };
         let entity = cx.entity();
         let result = models::mutate(

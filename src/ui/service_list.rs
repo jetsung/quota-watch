@@ -1,14 +1,34 @@
-use crate::models::AppState;
+use crate::models::{AppState, ServiceEntry};
 use crate::ui::service_card::{CardActions, render_service_card};
+use chrono::{DateTime, Utc};
 use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, div, px};
+use gpui_kit::{AnyElement, App, ScrollHandle, div, px};
+use std::cmp::Ordering;
 use uuid::Uuid;
 
 /// 卡片最小舒适宽度（含边距）：低于此值加列会挤压内容。
 const CARD_MIN_WIDTH: f32 = 340.;
 /// 列间距（gap_3 = 12px）。
 const COLUMN_GAP: f32 = 12.;
+
+/// 复合排序比较：置顶条目在前；置顶区内按 `pinned_at` 倒序（后置顶者在前，
+/// `None` 因数据损坏回退为最末置顶位）；未置顶区按 `next_reset_at` 升序。
+pub fn compare_entries(a: &ServiceEntry, b: &ServiceEntry) -> Ordering {
+    match (a.is_pinned, b.is_pinned) {
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        _ => {}
+    }
+    if a.is_pinned {
+        // 倒序：None 视为最早（最小时间戳），在倒序中回退为最末置顶位
+        b.pinned_at
+            .unwrap_or(DateTime::<Utc>::MIN_UTC)
+            .cmp(&a.pinned_at.unwrap_or(DateTime::<Utc>::MIN_UTC))
+    } else {
+        a.next_reset_at().cmp(&b.next_reset_at())
+    }
+}
 
 /// 服务列表：按 next_reset_at 排序展示卡片，宽度跟随窗口宽度响应式分列。
 /// 布局：按视口宽度计算列数（1~3 列），手动分行为 v_flex(h_flex(...)) 网格；
@@ -17,10 +37,11 @@ pub fn render_service_list(
     state: &AppState,
     actions: &dyn Fn(Uuid) -> CardActions,
     viewport_width: f32,
+    scroll_handle: &ScrollHandle,
     cx: &App,
 ) -> AnyElement {
     let mut services: Vec<_> = state.services.iter().collect();
-    services.sort_by_key(|s| s.next_reset_at());
+    services.sort_by(|a, b| compare_entries(a, b));
 
     if services.is_empty() {
         return empty_placeholder();
@@ -62,6 +83,7 @@ pub fn render_service_list(
 
     div()
         .id("service-list")
+        .track_scroll(scroll_handle)
         .w_full()
         .flex_grow_1()
         .overflow_y_scroll()
@@ -97,4 +119,76 @@ fn empty_placeholder() -> AnyElement {
                 ),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn entry(name: &str, interval_hours: f64) -> ServiceEntry {
+        ServiceEntry {
+            id: Uuid::new_v4(),
+            service_name: name.into(),
+            interval_hours,
+            last_reset_time: Utc.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap(),
+            reminder_threshold_minutes: 60,
+            secondary_reminder_interval_minutes: 5,
+            is_muted: false,
+            reset_config_mode: Default::default(),
+            url: None,
+            is_pinned: false,
+            pinned_at: None,
+        }
+    }
+
+    fn names(services: &[&ServiceEntry]) -> Vec<String> {
+        services.iter().map(|s| s.service_name.clone()).collect()
+    }
+
+    #[test]
+    fn later_pinned_comes_first_unpinned_by_next_reset() {
+        // A 先置顶、B 后置顶 → B, A 在前；未置顶 C, D 按 next_reset_at 升序
+        let mut a = entry("A", 5.0);
+        let mut b = entry("B", 7.0);
+        let c = entry("C", 3.0);
+        let d = entry("D", 9.0);
+        a.is_pinned = true;
+        a.pinned_at = Some(Utc.with_ymd_and_hms(2026, 10, 25, 10, 0, 0).unwrap());
+        b.is_pinned = true;
+        b.pinned_at = Some(Utc.with_ymd_and_hms(2026, 10, 25, 11, 0, 0).unwrap());
+
+        let mut services: Vec<&ServiceEntry> = vec![&d, &c, &b, &a];
+        services.sort_by(|x, y| compare_entries(x, y));
+        assert_eq!(names(&services), vec!["B", "A", "C", "D"]);
+    }
+
+    #[test]
+    fn unpin_restores_next_reset_order() {
+        // A 取消置顶后按 next_reset_at 回归未置顶序列
+        let mut a = entry("A", 5.0);
+        let c = entry("C", 3.0);
+        let d = entry("D", 9.0);
+        a.is_pinned = false;
+        a.pinned_at = None;
+
+        let mut services: Vec<&ServiceEntry> = vec![&d, &c, &a];
+        services.sort_by(|x, y| compare_entries(x, y));
+        assert_eq!(names(&services), vec!["C", "A", "D"]);
+    }
+
+    #[test]
+    fn pinned_with_none_pinned_at_falls_to_last_pinned_slot() {
+        // 数据损坏：is_pinned=true 而 pinned_at=None → 排在置顶区最末
+        let mut a = entry("A", 5.0);
+        let mut bad = entry("BAD", 7.0);
+        a.is_pinned = true;
+        a.pinned_at = Some(Utc.with_ymd_and_hms(2026, 10, 25, 10, 0, 0).unwrap());
+        bad.is_pinned = true;
+        bad.pinned_at = None;
+
+        let mut services: Vec<&ServiceEntry> = vec![&bad, &a];
+        services.sort_by(|x, y| compare_entries(x, y));
+        assert_eq!(names(&services), vec!["A", "BAD"]);
+    }
 }

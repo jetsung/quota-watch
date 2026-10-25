@@ -123,6 +123,8 @@ mod tests {
             is_muted: false,
             reset_config_mode: Default::default(),
             url: None,
+            is_pinned: false,
+            pinned_at: None,
         }
     }
 

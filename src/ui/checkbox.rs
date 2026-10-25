@@ -19,19 +19,24 @@ pub fn render_checkbox(
 ) -> impl IntoElement {
     let theme = cx.theme().clone();
     let label = label.to_string();
-    // 16px 方框：未勾选 = 主题输入边框；勾选 = 主色背景 + 白色“✓”
+    // 文字默认 13px；行高设为与字号相等（行框紧贴字形），配合 items_center
+    // 使 14px 方框与文字真正垂直居中（默认 1.5 倍行高会导致框与文字上下不齐）
+    let text_size = text_size.unwrap_or(px(13.));
+    // 14px 方框（贴近 13px 文字高度，避免框明显高出文字）：未勾选 = 前景色半透明
+    // 边框（input/border 色与灰色卡片背景过于接近，视觉上不直观）；
+    // 勾选 = 主色背景 + 边框 + 白色“✓”
     let mut box_ = div()
-        .size_4()
+        .size_3p5()
         .rounded_sm()
         .border_1()
         .flex()
         .items_center()
         .justify_center()
-        .border_color(theme.input);
+        .border_color(theme.foreground.opacity(0.45));
     if checked {
         box_ = box_.bg(theme.primary).border_color(theme.primary).child(
             div()
-                .text_size(px(12.))
+                .text_size(px(11.))
                 .font_weight(FontWeight::BOLD)
                 .text_color(white())
                 .child("✓"),
@@ -39,7 +44,7 @@ pub fn render_checkbox(
     }
     h_flex()
         .id(id)
-        .gap_2()
+        .gap_1()
         .items_center()
         .cursor_pointer()
         .on_click(move |_, window, app| on_change(&!checked, window, app))
@@ -48,7 +53,8 @@ pub fn render_checkbox(
             div()
                 .font_weight(FontWeight::BOLD)
                 .text_color(theme.foreground)
-                .when_some(text_size, |el, size| el.text_size(size))
+                .text_size(text_size)
+                .line_height(text_size)
                 .child(label),
         )
 }

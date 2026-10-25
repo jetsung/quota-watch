@@ -1397,7 +1397,7 @@ impl Render for SettingsView {
                 } else {
                     None
                 };
-                el.child(toast::toast_overlay(&state, action))
+                el.child(toast::toast_overlay(&state, action, false, cx))
             })
     }
 }

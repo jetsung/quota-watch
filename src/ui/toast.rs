@@ -1,4 +1,5 @@
 use gpui_kit::base::animation::EffectTransition;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::{Anchor, AnyElement, App, Div, FontWeight, SharedString, Window, div, px};
@@ -23,12 +24,19 @@ pub(crate) struct ToastState {
 
 const TOAST_ANIM_MS: u64 = 180;
 
-/// 首页与设置页共用的提示浮层：全屏遮罩 + 窗口正中横幅，
+/// 首页与设置页共用的提示浮层：全屏（可选）遮罩 + 窗口正中横幅，
 /// 进入时淡入上浮，退出时淡出下沉；遮罩阻断下层元素的鼠标交互。
 /// `action` 为可选的操作按钮（如"立即升级"），渲染在横幅下方。
-pub(crate) fn toast_overlay(state: &ToastState, action: Option<AnyElement>) -> AnyElement {
+/// `scrim` 为 true 时绘制半透明黑蒙板压暗背景（主窗体用），
+/// false 时透明浮层（设置页用，避免蒙板与面板底色混淆）。
+pub(crate) fn toast_overlay(
+    state: &ToastState,
+    action: Option<AnyElement>,
+    scrim: bool,
+    cx: &App,
+) -> AnyElement {
     let dur = Duration::from_millis(TOAST_ANIM_MS);
-    let mut banner = toast_card(state.message.clone());
+    let mut banner = toast_card(state.message.clone(), cx);
     if let Some(action) = action {
         banner = banner.child(div().mt_3().flex().justify_center().child(action));
     }
@@ -50,7 +58,7 @@ pub(crate) fn toast_overlay(state: &ToastState, action: Option<AnyElement>) -> A
         .right_0()
         .top_0()
         .bottom_0()
-        .bg(toast_scrim())
+        .when(scrim, |el| el.bg(toast_scrim()))
         .flex()
         .items_center()
         .justify_center()
@@ -71,16 +79,17 @@ pub(crate) fn toast_overlay(state: &ToastState, action: Option<AnyElement>) -> A
     .into_any_element()
 }
 
-/// 首页提示浮层的半透明遮罩色，用于压暗背景、突出提示内容。
-pub(crate) fn toast_scrim() -> gpui_kit::Hsla {
+/// 提示浮层的半透明遮罩色：压暗背景、突出提示内容（主窗体使用；
+/// 设置页底色较深不使用，避免与面板背景混淆）。
+fn toast_scrim() -> gpui_kit::Hsla {
     gpui_kit::hsla(0., 0., 0., 0.35)
 }
 
-/// 首页与设置页共用的提示横幅：无边框、浅灰背景、大上下间距、
-/// 黑色加粗居中文案，铺满可用宽度。
-pub(crate) fn toast_card(message: SharedString) -> Div {
-    let bg: gpui_kit::Hsla = gpui_kit::rgb(0xe4e4e7).into();
-    let fg: gpui_kit::Hsla = gpui_kit::rgb(0x000000).into();
+/// 首页与设置页共用的提示横幅：popover 表面色 + 主题边框 + 较强阴影，
+/// 与底层窗体（服务卡片浅灰、设置面板底色）明确区分；16px 横向内边距、
+/// 中等间距文案行，铺满可用宽度。
+pub(crate) fn toast_card(message: SharedString, cx: &App) -> Div {
+    let theme = cx.theme();
     // 支持多行文案（如“当前版本 / 最新版本”分行的更新提示），逐行渲染
     let lines: Vec<AnyElement> = message
         .split('\n')
@@ -88,15 +97,17 @@ pub(crate) fn toast_card(message: SharedString) -> Div {
         .collect();
     div()
         .w_full()
-        .px_6()
-        .py(px(22.))
-        .rounded_md()
-        .bg(bg)
-        .text_color(fg)
+        .px_4()
+        .py(px(14.))
+        .rounded_lg()
+        .bg(theme.popover)
+        .border_1()
+        .border_color(theme.border)
+        .text_color(theme.popover_foreground)
         .text_center()
-        .text_size(px(16.))
-        .font_weight(FontWeight::BOLD)
-        .shadow_md()
+        .text_size(px(15.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .shadow_lg()
         .children(lines)
 }
 

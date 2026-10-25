@@ -24,7 +24,7 @@ src/
     ├── statusbar.rs  # 版本号 + 版权信息
     ├── modal.rs      # Add/Edit 表单（模式切换、回车保存）
     ├── settings.rs   # 设置对话框（桌面通知 / 备份与恢复 / 导入与导出 / 关于）
-    ├── toast.rs      # 居中遮罩提示框（忙碌进度与结果反馈统一载体）
+    ├── toast.rs      # 居中提示框（主窗体带蒙板 / 设置页透明）
     └── checkbox.rs   # 自定义勾选框（✓ 字符）
 ```
 
@@ -50,6 +50,8 @@ src/
 | `is_muted` | `bool` | 仅抑制周期提醒 |
 | `reset_config_mode` | `ResetConfigMode` | `LastReset`（默认，仅兼容旧配置）/ `NextReset` / `Countdown`（serde snake_case） |
 | `url` | `Option<String>`（`#[serde(default)]`） | 必须以 `http://` 或 `https://` 开头；旧配置无此字段时为 None |
+| `is_pinned` | `bool`（`#[serde(default)]`） | 置顶标记；旧配置缺省为 false |
+| `pinned_at` | `Option<DateTime<Utc>>`（`#[serde(default)]`） | 最近一次置顶时间（UTC），置顶区内排序键；旧配置缺省为 None |
 
 派生时间量：
 
@@ -73,6 +75,7 @@ src/
   - `update`：先 validate；**关键计时字段（`interval_hours` 或 `last_reset_time`）变更时自动重置该条目的标志位**。
   - `remove`：移除条目并同时清除标志位，返回是否实际删除。
   - `toggle_mute`：翻转 `is_muted`。
+  - `toggle_pin`：翻转 `is_pinned`；置 true 时写入 `pinned_at = Some(Utc::now())`，置 false 时清空 `pinned_at = None`。
 - 所有成功变更通过 `mutate` 封装：执行变更 → 持久化 → 发射 `AppStateChanged` 事件刷新 UI；校验失败时通过回调以 error Toast 显示消息，不写入状态。
 
 ### 3.5 倒计时格式化 `format_countdown`
@@ -160,13 +163,14 @@ src/
 
 ### 7.3 服务列表（service_list.rs）
 
-- 按 `next_reset_at` **升序排序**展示。
+- **复合排序**（`compare_entries`）：置顶条目（`is_pinned`）整体排前，置顶区内按 `pinned_at` **倒序**（后置顶者在前，`None` 因数据损坏回退为最末置顶位）；未置顶条目按 `next_reset_at` **升序**，不参与置顶区排序。
+- **置顶跟随滚动**：勾选置顶成功后列表滚动位置回顶（RootView 持有 `ScrollHandle`，经 `track_scroll` 绑定列表容器；取消置顶不动滚动位置）。
 - **响应式分列**：可用宽度（视口宽 - 32px 内边距）能容纳多少张最小宽度 340px 的卡片（列间距 12px）就分几列，无上限，至少 1 列；多列时卡片等宽伸缩，手动分行组成网格。
 - **空状态**：🕐 图标 + "暂无服务" + "点击右下角 '新建服务' 添加第一个服务"。
 
 ### 7.4 服务卡片（service_card.rs）
 
-每张卡片包含：服务名（18px 粗体）、状态徽章（14px 白色粗体 + 纯色背景）、28px 粗体倒计时、"下次重置: <本地时区 YYYY-MM-DD HH:MM:SS>"、静音勾选框、编辑/删除按钮。静音勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
+每张卡片包含：服务名（18px 粗体，**置顶条目前置 📌 图钉**）、状态徽章（14px 白色粗体 + 纯色背景）、28px 粗体倒计时、"下次重置: <本地时区 YYYY-MM-DD HH:MM:SS>"、静音/置顶勾选框、编辑/删除按钮。勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
 
 - **状态徽章**（按剩余时间 vs 阈值）：
 
@@ -178,6 +182,7 @@ src/
 
 - 重置中显示 `00:00:00`，等待下一 tick 滚动。
 - **URL 交互**：配置了 `url` 的条目，卡片标题变主题色可点击，`open_url` 在系统浏览器打开；未配置则纯文本。
+- **置顶**：卡片底部操作行"静音重复提醒"旁新增"置顶"勾选框（`pin-{id}`），经 `mutate → toggle_pin` 持久化并即时重排列表，成功 Toast"已置顶/已取消置顶 <服务名>"；编辑表单不暴露置顶字段，编辑提交沿用旧条目置顶值。
 - **右键**：卡片任意位置右键 = 删除确认（与删除按钮等效）。
 - 纯函数渲染（RenderOnce 语义），每 tick 仅倒计时文本变化。
 
@@ -191,7 +196,7 @@ src/
 
 ### 7.7 勾选框（checkbox.rs）
 
-自定义实现（gpui-kit 勾选图标无法定制为字符）：16px 圆角方框，未勾选 = 主题 input 边框；勾选 = 主色背景 + 白色粗体"✓"；点击切换并回调新值。标签字号默认跟随主题，支持传入自定义字号（如静音勾选框 13px）。
+自定义实现（gpui-kit 勾选图标无法定制为字符）：14px 圆角方框（贴近 13px 标签文字高度），未勾选 = 前景色 45% 透明度边框（input/border 色与灰色卡片背景过于接近，视觉不直观）；勾选 = 主色背景 + 主色边框 + 白色粗体"✓"（11px）。框与文字间距 4px（`gap_1`），行高与字号相等保证框与文字垂直居中；点击切换并回调新值。标签字号默认 13px，支持传入自定义字号。
 
 ### 7.8 Add/Edit 表单（modal.rs）
 
@@ -231,7 +236,8 @@ src/
 
 ### 7.11 居中提示框 Toast（toast.rs）
 
-- 全屏居中遮罩（`toast_overlay`），带 `occlude()` 拦截下层点击——提示期间（约 2.25s）下层按钮点击可能被吞，属预期行为。
+- 全屏居中浮层（`toast_overlay`，`scrim` 参数区分两处）：`occlude()` 始终拦截下层指针事件——提示期间下层按钮不可点击、hover 不变手型/高亮/tooltip，仅提示横幅及其操作按钮可交互。**主窗体（`RootView`）传 `scrim=true`**：绘制半透明黑蒙板（alpha 0.35）压暗背景、突出提示横幅（主窗体卡片同为灰色，无蒙板时提示与条目背景混同，视觉不直观）；**设置页（`SettingsView`）传 `scrim=false`**：透明置顶，不压暗设置面板。
+- **横幅卡片样式（`toast_card`）**：主题 token 渲染——`popover` 表面色背景 + `border` 1px 边框 + `popover_foreground` 文字（15px 加重 SEMIBOLD、居中），`rounded_lg` 圆角、`shadow_lg` 较强阴影（顶层浮层 elevation），内边距 `px_4 py(14px)`，支持多行文案逐行渲染；与底层窗体（服务卡片浅灰、设置面板底色）明确区分，不撞色。
 - 动效：淡入 + 上浮进入，2s 停留后 0.25s 淡出移除（库内 Toast 自动关闭写死 5s，故用自定义两段定时）。
 - 主窗口与设置对话框共用（`BottomToast` trait / `show_toast`）；连续提示以序号（`toast_seq`）防旧任务误清新提示。
 - **升级流程 Toast 变体**（`ToastState` 的 `action_upgrade` / `action_cancel` / `action_restart` 标志位驱动）：发现新版本 → 持久 Toast + "立即升级"/"关闭"按钮；升级中 → 持久进度 Toast + "取消"按钮；升级成功 → 持久 Toast + "立即重启"/"关闭"按钮。持久 Toast 不自动关闭，由操作完成或用户关闭移除。
@@ -297,6 +303,7 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 各模块 `#[cfg(test)]` 内联测试，覆盖：
 
 - `parse_interval_expr` 表达式、`next_reset_at`（整数/浮点/跨天）、倒计时格式、校验拒绝、AppState 增删改。
+- 置顶：`toggle_pin` 翻转与 `pinned_at` 写入/清空、旧 JSON 缺置顶字段反序列化为未置顶；列表复合排序（后置顶者在前、未置顶按 `next_reset_at`、取消置顶恢复原序、损坏数据 `pinned_at=None` 回退最末置顶位）。
 - 旧配置含废弃 `timezone` 字段可正常反序列化。
 - 持久化 roundtrip、文件不存在返回默认、损坏文件备份分支、旧 `services.json` 一次性迁移为 `quota-watch.json`（测试通过临时目录 + 环境变量隔离，不读真实用户配置）。
 - `WebdavConfig` 序列化往返、WebDAV 客户端远程目录归一化。

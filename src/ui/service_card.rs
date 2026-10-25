@@ -20,6 +20,7 @@ type MouseDownCallback = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + Sen
 /// 组件 API 要求 Sized 的 `impl Fn`，故字段持有 `Rc<dyn Fn>`，渲染时包一层具体闭包。
 pub struct CardActions {
     pub on_toggle_mute: MuteCallback,
+    pub on_toggle_pin: MuteCallback,
     pub on_edit: ClickCallback,
     pub on_delete: ClickCallback,
     pub on_delete_context: MouseDownCallback,
@@ -98,11 +99,16 @@ pub fn render_service_card(
             .items_center()
             .child({
                 // id 前置使两分支同为 Stateful<Div>；配置了 URL 的条目标题可点击，在系统浏览器打开
+                let title_text = if entry.is_pinned {
+                    format!("📌 {}", entry.service_name)
+                } else {
+                    entry.service_name.clone()
+                };
                 let title = div()
                     .id(format!("title-{}", id))
                     .text_size(px(18.))
                     .font_weight(gpui_kit::FontWeight::BOLD)
-                    .child(entry.service_name.clone());
+                    .child(title_text);
                 match entry.url.clone() {
                     Some(url) => title
                         .cursor_pointer()
@@ -137,7 +143,9 @@ pub fn render_service_card(
     )
     .child(
         h_flex()
-            .gap_2()
+            // 组间 16px：与组内 4px（框-文字）、按钮间 8px 拉开层次，
+            // 避免"勾选框前后文本等距"导致分组不直观
+            .gap_4()
             .items_center()
             .child(render_checkbox(
                 format!("mute-{}", id),
@@ -145,6 +153,17 @@ pub fn render_service_card(
                 entry.is_muted,
                 {
                     let f = actions.on_toggle_mute;
+                    move |c: &bool, w: &mut Window, a: &mut App| f(c, w, a)
+                },
+                Some(px(13.)),
+                cx,
+            ))
+            .child(render_checkbox(
+                format!("pin-{}", id),
+                "置顶",
+                entry.is_pinned,
+                {
+                    let f = actions.on_toggle_pin;
                     move |c: &bool, w: &mut Window, a: &mut App| f(c, w, a)
                 },
                 Some(px(13.)),

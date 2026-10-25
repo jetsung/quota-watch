@@ -36,6 +36,12 @@ pub struct ServiceEntry {
     /// 可选的服务主页 URL：卡片标题点击时在系统浏览器打开。旧配置无此字段时为 None。
     #[serde(default)]
     pub url: Option<String>,
+    /// 置顶标记：置顶条目在列表中排于未置顶条目之前。旧配置缺省为 false。
+    #[serde(default)]
+    pub is_pinned: bool,
+    /// 最近一次置顶时间（UTC）：置顶区内按其倒序排列（后置顶者在前）。旧配置缺省为 None。
+    #[serde(default)]
+    pub pinned_at: Option<DateTime<Utc>>,
 }
 
 /// 解析重置间隔表达式（单位：小时）：支持十进制数（含小数点）与
@@ -314,6 +320,22 @@ impl AppState {
         Ok(())
     }
 
+    /// 翻转置顶状态：置 true 时记录最近一次置顶时间，置 false 时清空。
+    pub fn toggle_pin(&mut self, id: Uuid) -> anyhow::Result<()> {
+        let entry = self
+            .services
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("服务不存在: {}", id))?;
+        entry.is_pinned = !entry.is_pinned;
+        entry.pinned_at = if entry.is_pinned {
+            Some(Utc::now())
+        } else {
+            None
+        };
+        Ok(())
+    }
+
     /// 运行时标志位（不存在则返回默认值）。
     pub fn flags(&self, id: Uuid) -> RuntimeFlags {
         self.runtime.get(&id).cloned().unwrap_or_default()
@@ -392,6 +414,8 @@ mod tests {
             is_muted: false,
             reset_config_mode: Default::default(),
             url: None,
+            is_pinned: false,
+            pinned_at: None,
         }
     }
 
@@ -472,6 +496,44 @@ mod tests {
         assert!(state.global_notifications_enabled);
         // 旧配置无 webdav_config 字段 → None
         assert!(state.webdav_config.is_none());
+    }
+
+    #[test]
+    fn toggle_pin_writes_and_clears_pinned_at() {
+        let mut state = AppState::from_persisted(PersistedState::default());
+        let entry = base_entry();
+        let id = entry.id;
+        state.add(entry).unwrap();
+
+        state.toggle_pin(id).unwrap();
+        let e = state.services.iter().find(|s| s.id == id).unwrap();
+        assert!(e.is_pinned);
+        assert!(e.pinned_at.is_some());
+
+        state.toggle_pin(id).unwrap();
+        let e = state.services.iter().find(|s| s.id == id).unwrap();
+        assert!(!e.is_pinned);
+        assert!(e.pinned_at.is_none());
+
+        assert!(state.toggle_pin(Uuid::new_v4()).is_err());
+    }
+
+    #[test]
+    fn old_service_json_without_pin_fields_defaults_unpinned() {
+        // 旧 services.json 缺 is_pinned/pinned_at 字段 → 反序列化为未置顶
+        let json = r#"{
+            "id": "0193acfe-1234-7abc-8def-0123456789ab",
+            "service_name": "old",
+            "interval_hours": 5.0,
+            "last_reset_time": "2026-10-16T00:00:00Z",
+            "reminder_threshold_minutes": 60,
+            "secondary_reminder_interval_minutes": 5,
+            "is_muted": false,
+            "reset_config_mode": "last_reset"
+        }"#;
+        let e: ServiceEntry = serde_json::from_str(json).unwrap();
+        assert!(!e.is_pinned);
+        assert!(e.pinned_at.is_none());
     }
 
     #[test]
