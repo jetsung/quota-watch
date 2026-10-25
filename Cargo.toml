@@ -48,6 +48,10 @@ wayland-protocols = "0.32.13"
 [target."cfg(windows)".dependencies]
 zip = "9.0.5"
 
+[dev-dependencies]
+# UI 集成测试（headless 窗口渲染 + 指针事件模拟）：仅 cargo test 构建启用
+gpui-kit = { version = "0.7.3", features = ["test-support"] }
+
 [package.metadata.deb]
 maintainer = "Jetsung Chan <i@jetsung.com>"
 # 维护脚本目录（postrm：卸载后清理 /opt/quota-watch 空目录，cargo-deb 自动 chmod 755）

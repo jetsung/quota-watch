@@ -120,3 +120,44 @@ pub fn render_statusbar(
 
 /// 设置菜单图标内联 SVG（Lucide menu 风格，currentColor 描边）。
 const MENU_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>"##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models;
+    use crate::ui::RootView;
+    use gpui_kit::component::WindowExt as _;
+    use gpui_kit::test::TestWindowExt as _;
+
+    /// 回归：点击设置菜单项后菜单必须关闭，同时打开对应设置窗体。
+    /// 菜单不关闭会残留在屏上，可继续点其它项叠开 N 个窗体。
+    #[gpui_kit::test]
+    fn settings_menu_closes_after_picking_item(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        // 与 gpui_kit::open_window 一致：用 base::Root 包装，补齐 component 窗口状态
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let state = models::new_app_state(cx, Default::default());
+            let view = cx.new(|cx| RootView::new(state, window, cx));
+            gpui_kit::base::Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            // 初始状态：菜单未展开
+            assert!(window.try_find("settings-menu-notifications").is_none());
+
+            window.click("statusbar-settings-trigger", cx);
+            window.render_frame(cx);
+            // 点击设置按钮：菜单展开
+            assert!(window.try_find("settings-menu-notifications").is_some());
+
+            window.click("settings-menu-notifications", cx);
+            window.render_frame(cx);
+            // 点击菜单项：菜单关闭 + 对应单页窗体打开
+            assert!(
+                window.try_find("settings-menu-notifications").is_none(),
+                "菜单项点击后菜单应关闭"
+            );
+            assert!(window.has_active_dialog(cx), "应打开设置窗体");
+        });
+    }
+}

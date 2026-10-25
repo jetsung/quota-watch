@@ -30,6 +30,36 @@ fn print_help() {
     );
 }
 
+/// 设置 UI 字体族：gpui-fast Linux 的系统字体（IBM Plex Sans）无中文字形，
+/// 中文经字体回退渲染后 BOLD 全局失效（窗体标题、加粗标签等均为常规字重）。
+/// 因此优先为本机选用一个含 Bold 变体的中文字体族；候选均未安装时保持默认。
+/// gpui-kit 的 theme.font_family 会注入全部文本视图，属于全局字体设置。
+fn apply_ui_font_family(cx: &mut gpui_kit::App) {
+    use gpui_kit::component::Theme;
+
+    // 各平台主流中文字体族（均含 Bold 变体），按优先级取第一个已安装者
+    #[cfg(target_os = "macos")]
+    const CANDIDATES: &[&str] = &["PingFang SC"];
+    #[cfg(target_os = "windows")]
+    const CANDIDATES: &[&str] = &["Microsoft YaHei"];
+    #[cfg(all(unix, not(target_os = "macos")))]
+    const CANDIDATES: &[&str] = &[
+        "Noto Sans CJK SC", // cosmic-text 脚本回退的预期族名
+        "思源黑体",         // Source Han Sans SC 的中文族名
+        "Source Han Sans SC",
+        "WenQuanYi Micro Hei",
+    ];
+
+    let installed = cx.text_system().all_font_names();
+    let Some(family) = CANDIDATES
+        .iter()
+        .find(|family| installed.iter().any(|name| name == *family))
+    else {
+        return;
+    };
+    Theme::global_mut(cx).font_family = (*family).into();
+}
+
 fn main() {
     // CLI 子命令分发：version / self-update / help；无匹配（含未知参数）进入 GUI 模式。
     match std::env::args().nth(1) {
@@ -88,6 +118,7 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(|cx: &mut gpui_kit::App| {
             gpui_kit::init(cx);
+            apply_ui_font_family(cx);
 
             // AppState 初始化（7.1）
             let state = models::new_app_state(cx, persisted);
