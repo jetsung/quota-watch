@@ -102,7 +102,7 @@ macOS 用户建议优先使用 `*-universal.app.tar.xz`（解压即得 `QuotaWat
 | --- | --- |
 | Linux | `$HOME/.config/quota-watch/config.json` |
 | macOS | `~/Library/Application Support/cn.gcli.quota-watch/config.json` |
-| Windows | `%APPDATA%\gcli\quota-watch\config\config.json` |
+| Windows | `%APPDATA%\quota-watch\config.json` |
 
 所有时间均以 UTC 存储、以系统本地时区展示；旧版本配置中的字段（如已废弃的 `timezone`）在反序列化时会被自动忽略。
 

@@ -5,10 +5,23 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-/// 配置文件路径：`~/.config/quota-watch/config.json`（各平台遵循标准配置目录，macOS 为
-/// `~/Library/Application Support/cn.gcli.quota-watch/`）。
+/// 配置文件路径（按平台解析）：
+/// - Linux：`$HOME/.config/quota-watch/config.json`
+/// - macOS：`~/Library/Application Support/cn.gcli.quota-watch/config.json`
+/// - Windows：`%APPDATA%\quota-watch\config.json`（扁平路径，不经 `ProjectDirs::config_dir()`）
+///
+/// 标准路径无法解析时统一回退 `$HOME/.config/quota-watch/config.json`。
 /// 导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名，仅本地文件名为 `config.json`。
 pub fn config_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return PathBuf::from(appdata)
+                .join("quota-watch")
+                .join("config.json");
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
     if let Some(dirs) = directories::ProjectDirs::from("cn", "gcli", "quota-watch") {
         return dirs.config_dir().join("config.json");
     }
@@ -166,6 +179,47 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(serde_json::from_str::<PersistedState>(&content).is_err());
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_config_path_uses_appdata_flat_layout() {
+        let dir = std::env::temp_dir().join(format!("quota-watch-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: 测试进程内环境变量隔离；仅本测试读取 config_path()
+        unsafe {
+            std::env::set_var("APPDATA", &dir);
+        }
+        let path = config_path();
+        unsafe {
+            std::env::remove_var("APPDATA");
+        }
+        assert_eq!(path, dir.join("quota-watch").join("config.json"));
+        let s = path.to_string_lossy();
+        assert!(!s.contains("gcli"));
+        assert!(!s.contains("config\\"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_config_path_falls_back_when_appdata_missing() {
+        let dir = std::env::temp_dir().join(format!("quota-watch-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: 测试进程内环境变量隔离；仅本测试读取 config_path()
+        unsafe {
+            std::env::remove_var("APPDATA");
+            std::env::set_var("HOME", &dir);
+        }
+        let path = config_path();
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(
+            path,
+            dir.join(".config").join("quota-watch").join("config.json")
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
