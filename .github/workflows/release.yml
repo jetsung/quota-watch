@@ -130,10 +130,7 @@ jobs:
     runs-on: macos-26
     env:
       APP_NAME: QuotaWatch
-      BUNDLE_ID: cn.jetsung.quota-watch
-      # 配置了 Developer ID 证书 Secrets 时自动签名公证并附加 .app 产物；
-      # 未配置则回退为未签名构建，不影响其余平台正常发布
-      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
+      BUNDLE_ID: cn.gcli.quota-watch
     steps:
       - uses: actions/checkout@v7
         with:
@@ -170,21 +167,43 @@ jobs:
             -output quota-watch
           lipo -info quota-watch
 
-      - name: Sign and notarize
-        uses: ./.github/actions/macos-sign-notarize
-        env:
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          NOTARY_P8: ${{ secrets.NOTARY_P8 }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        with:
-          has_signing: ${{ env.HAS_SIGNING }}
-          app_name: ${{ env.APP_NAME }}
-          bundle_id: ${{ env.BUNDLE_ID }}
-          version: ${{ needs.extract-version.outputs.version }}
+      - name: Assemble .app bundle
+        run: |
+          APP_DIR="${{ env.APP_NAME }}.app"
+          mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+
+          cp quota-watch "$APP_DIR/Contents/MacOS/quota-watch"
+
+          # PNG 生成 icns 图标
+          ICONSET=quota-watch.iconset
+          mkdir "$ICONSET"
+          SRC=assets/icons/quota-watch-256.png
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size "$SRC" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+            double=$((size * 2))
+            sips -z $double $double "$SRC" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/quota-watch.icns"
+
+          cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>              <string>${{ env.APP_NAME }}</string>
+            <key>CFBundleDisplayName</key>       <string>Quota Watch</string>
+            <key>CFBundleIdentifier</key>        <string>${{ env.BUNDLE_ID }}</string>
+            <key>CFBundleVersion</key>           <string>${{ needs.extract-version.outputs.version }}</string>
+            <key>CFBundleShortVersionString</key><string>${{ needs.extract-version.outputs.version }}</string>
+            <key>CFBundleExecutable</key>        <string>quota-watch</string>
+            <key>CFBundleIconFile</key>          <string>quota-watch</string>
+            <key>CFBundlePackageType</key>       <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>    <string>10.15</string>
+            <key>NSHighResolutionCapable</key>   <true/>
+            <key>NSHumanReadableCopyright</key>  <string>Apache-2.0</string>
+          </dict>
+          </plist>
+          PLIST
 
       - name: Create release tarballs
         run: |
@@ -193,10 +212,9 @@ jobs:
           for arch in x86_64 aarch64; do
             tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
           done
-          # 已公证的 .app（Universal）作为附加产物；裸二进制资产名不变，兼容应用内自更新
-          if [ "${{ env.HAS_SIGNING }}" = "true" ]; then
-            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal-signed.app.tar.xz" "${{ env.APP_NAME }}.app"
-          fi
+          # 未签名的 .app（Universal）；文件名不含 signed，作为未签名信号。
+          # 不含 apple-darwin 与单 arch 关键词，不会被应用内自更新选中（见 src/update.rs）
+          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal.app.tar.xz" "${{ env.APP_NAME }}.app"
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
