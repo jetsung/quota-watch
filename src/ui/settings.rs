@@ -5,7 +5,7 @@ use crate::update;
 use crate::webdav::{self, RemoteFile, WebdavClient};
 use anyhow::Context as _;
 use chrono::Local;
-use gpui_kit::base::{Selectable as _, h_flex, v_flex};
+use gpui_kit::base::{h_flex, v_flex};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::IconName;
@@ -22,9 +22,10 @@ use gpui_kit::{
 use std::io::Write;
 use std::path::Path;
 
-/// 设置面板左侧导航的选项卡。
+/// 设置单页窗体对应的页面类型：经左下角"设置"菜单直达打开，
+/// 一次打开只呈现一个页面，切换功能需关窗后重开。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SettingsTab {
+pub(crate) enum SettingsTab {
     Notifications,
     BackupSync,
     ImportExport,
@@ -32,13 +33,6 @@ enum SettingsTab {
 }
 
 impl SettingsTab {
-    const ALL: [Self; 4] = [
-        Self::Notifications,
-        Self::BackupSync,
-        Self::ImportExport,
-        Self::About,
-    ];
-
     fn label(self) -> &'static str {
         match self {
             Self::Notifications => "桌面通知",
@@ -48,12 +42,13 @@ impl SettingsTab {
         }
     }
 
-    fn id(self) -> &'static str {
+    /// 内容区高度按页面分级：内容最多的备份页保持 460，其余按内容量收紧，
+    /// 避免低内容页面出现大面积空白（外层仍受 max_h 580 约束）。
+    fn content_height(self) -> f32 {
         match self {
-            Self::Notifications => "settings-tab-notifications",
-            Self::BackupSync => "settings-tab-backup-sync",
-            Self::ImportExport => "settings-tab-import-export",
-            Self::About => "settings-tab-about",
+            Self::BackupSync => 460.,
+            Self::About => 320.,
+            Self::Notifications | Self::ImportExport => 240.,
         }
     }
 }
@@ -68,14 +63,16 @@ enum Busy {
     Delete(String),
 }
 
-/// 设置面板：通知开关、WebDAV 连接与手动同步、配置导入导出。
+/// 设置单页窗体：按构造时的页面类型渲染对应功能（通知开关、WebDAV
+/// 连接与手动同步、配置导入导出、关于），窗体内不含页面导航。
 pub struct SettingsView {
     state: Entity<AppState>,
     server_url: Entity<InputState>,
     username: Entity<InputState>,
     password: Entity<InputState>,
     remote_dir: Entity<InputState>,
-    active_tab: SettingsTab,
+    /// 窗体呈现的设置页面（构造时确定，窗体内不可切换）。
+    page: SettingsTab,
     busy: Option<Busy>,
     /// None = 尚未拉取；Some(empty) = 云端无配置文件。
     remote_files: Option<Vec<RemoteFile>>,
@@ -102,7 +99,12 @@ fn pointer_button(id: impl Into<gpui_kit::ElementId>) -> Button {
 const DEFAULT_REMOTE_DIR: &str = "/quota-watch";
 
 impl SettingsView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>, state: Entity<AppState>) -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        state: Entity<AppState>,
+        page: SettingsTab,
+    ) -> Self {
         let config = state.read(cx).webdav_config.clone().unwrap_or_default();
 
         let view = Self {
@@ -128,7 +130,7 @@ impl SettingsView {
                     .default_value(config.remote_dir.clone())
                     .placeholder("/quota-watch")
             }),
-            active_tab: SettingsTab::Notifications,
+            page,
             busy: None,
             remote_files: None,
             checking_update: false,
@@ -1221,7 +1223,7 @@ impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let notifications_enabled = self.state.read(cx).global_notifications_enabled;
-        let active_tab = self.active_tab;
+        let page = self.page;
 
         let title_bar = h_flex()
             .justify_between()
@@ -1231,7 +1233,7 @@ impl Render for SettingsView {
                     .text_size(px(17.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.foreground)
-                    .child("设置"),
+                    .child(page.label()),
             )
             .child(
                 div()
@@ -1246,34 +1248,7 @@ impl Render for SettingsView {
                     .child("✕"),
             );
 
-        let nav = v_flex()
-            .flex_shrink_0()
-            .w(px(76.))
-            .gap_1()
-            .children(SettingsTab::ALL.map(|tab| {
-                let selected = active_tab == tab;
-                pointer_button(tab.id())
-                    .ghost()
-                    .selected(selected)
-                    .w_full()
-                    .px_1()
-                    .cursor_pointer()
-                    .child(
-                        div()
-                            .w_full()
-                            .text_center()
-                            .text_size(px(13.))
-                            .child(tab.label()),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if this.active_tab != tab {
-                            this.active_tab = tab;
-                            cx.notify();
-                        }
-                    }))
-            }));
-
-        let content = match active_tab {
+        let content = match page {
             SettingsTab::Notifications => self.render_notifications(notifications_enabled, cx),
             SettingsTab::BackupSync => self.render_backup_sync(cx),
             SettingsTab::ImportExport => self.render_import_export(cx),
@@ -1290,31 +1265,21 @@ impl Render for SettingsView {
             .gap_3()
             .child(title_bar)
             .child(
-                h_flex()
+                v_flex()
                     .w_full()
-                    .h(px(460.))
-                    .items_start()
-                    .gap_1()
-                    .child(nav)
-                    .child(div().w(px(1.)).h_full().flex_shrink_0().bg(theme.border))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .pr_3()
-                            .gap_3()
-                            .child(content)
-                            .when_some(self.error.clone(), |el, error| {
-                                el.child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(theme.danger)
-                                        .child(error),
-                                )
-                            })
-                            .overflow_y_scrollbar(),
-                    ),
+                    .h(px(page.content_height()))
+                    .pr_3()
+                    .gap_3()
+                    .child(content)
+                    .when_some(self.error.clone(), |el, error| {
+                        el.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(theme.danger)
+                                .child(error),
+                        )
+                    })
+                    .overflow_y_scrollbar(),
             )
             .when_some(toast_state, |el, state| {
                 let action = if state.action_restart {

@@ -1,5 +1,4 @@
 mod checkbox;
-mod header;
 mod modal;
 mod service_card;
 mod service_list;
@@ -8,6 +7,7 @@ pub mod statusbar;
 pub(crate) mod toast;
 
 pub use modal::AddEditView;
+use settings::SettingsTab;
 pub use settings::SettingsView;
 use toast::ToastState;
 
@@ -22,8 +22,9 @@ use gpui_kit::{
 use std::rc::Rc;
 use uuid::Uuid;
 
-/// RootView（6.1）：读取 `Entity<AppState>`，组合 Header + ServiceList + 状态栏，
+/// RootView（6.1）：读取 `Entity<AppState>`，组合服务列表与状态栏，
 /// 处理空状态占位与引导；承载 Add/Edit Modal、删除确认与全局开关交互。
+/// 设置与新增服务入口由状态栏左下角"设置"菜单提供。
 pub struct RootView {
     state: Entity<AppState>,
     toast: Option<ToastState>,
@@ -178,10 +179,10 @@ impl RootView {
         });
     }
 
-    /// 打开设置面板（通知开关 / WebDAV 同步 / 配置导入导出）。
-    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 打开设置单页窗体（page 指定页面，经左下角设置菜单进入）。
+    fn open_settings(&mut self, page: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.state.clone();
-        let view = cx.new(|cx| SettingsView::new(window, cx, state));
+        let view = cx.new(|cx| SettingsView::new(window, cx, state, page));
         window.open_dialog(cx, move |dialog, _, _| {
             // overlay_closable(false)：点击遮罩/主窗体不关闭，仅可通过面板上的“关闭”按钮退出
             dialog
@@ -348,17 +349,21 @@ impl Render for RootView {
         v_flex()
             .relative()
             .size_full()
-            // 三平台统一：系统标题栏负责窗口控制，内容区顶部 Header 承载设置与新建服务入口。
-            .child(header::render_header(
-                cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.open_settings(window, cx);
-                }),
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_add_edit(None, window, cx);
-                }),
-            ))
+            // 三平台统一：系统标题栏负责窗口控制，服务入口由左下角设置菜单提供。
             .child(list)
-            .child(statusbar::render_statusbar(cx))
+            .child(statusbar::render_statusbar(
+                cx,
+                cx.listener(
+                    |this, action: &statusbar::SettingsAction, window, cx| match action {
+                        statusbar::SettingsAction::AddService => {
+                            this.open_add_edit(None, window, cx);
+                        }
+                        statusbar::SettingsAction::OpenPage(page) => {
+                            this.open_settings(*page, window, cx);
+                        }
+                    },
+                ),
+            ))
             .when(has_active_dialog, |el| {
                 el.child(
                     gpui_kit::div()

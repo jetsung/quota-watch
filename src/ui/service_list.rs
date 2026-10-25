@@ -109,7 +109,7 @@ fn empty_placeholder() -> AnyElement {
                 .child(
                     div()
                         .text_size(px(13.))
-                        .child("点击右下角 “新建服务” 添加第一个服务"),
+                        .child("点击左下角 “设置” → “新增服务” 添加第一个服务"),
                 ),
         )
         .into_any_element()

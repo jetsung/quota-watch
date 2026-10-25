@@ -99,8 +99,14 @@ pub fn render_service_card(
             .items_center()
             .child({
                 // id 前置使两分支同为 Stateful<Div>；配置了 URL 的条目标题可点击，在系统浏览器打开
+                // Linux 主 UI 字体不含 U+1F4CC（📌）字形且 GPUI 无 emoji 回退，改用 BMP 的 ▲
                 let title_text = if entry.is_pinned {
-                    format!("📌 {}", entry.service_name)
+                    let marker = if cfg!(target_os = "linux") {
+                        "▲"
+                    } else {
+                        "📌"
+                    };
+                    format!("{} {}", marker, entry.service_name)
                 } else {
                     entry.service_name.clone()
                 };
