@@ -371,9 +371,9 @@ fn filename_from_href(href: &str) -> Option<String> {
     Some(percent_decode(last))
 }
 
-/// 云端配置文件识别：当前前缀 `quota-watch`，兼容历史 `services` 前缀备份。
+/// 云端配置文件识别：仅接受 `quota-watch` 前缀的 `.json` 备份（不兼容历史 `services` 前缀）。
 fn is_services_file(name: &str) -> bool {
-    (name.starts_with("quota-watch") || name.starts_with("services")) && name.ends_with(".json")
+    name.starts_with("quota-watch") && name.ends_with(".json")
 }
 
 fn encode_path_segment(segment: &str) -> String {
@@ -439,7 +439,7 @@ mod tests {
     </d:propstat>
   </d:response>
   <d:response>
-    <d:href>/dav/quota-watch/services_20261021-120000.json</d:href>
+    <d:href>/dav/quota-watch/quota-watch_20261021-120000.json</d:href>
     <d:propstat>
       <d:prop><d:getlastmodified>Wed, 21 Oct 2026 12:00:00 GMT</d:getlastmodified></d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
@@ -459,7 +459,7 @@ mod tests {
         let files = parse_propfind(PROPFIND_RESPONSE).unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].name, "quota-watch_20261022-013000.json");
-        assert_eq!(files[1].name, "services_20261021-120000.json");
+        assert_eq!(files[1].name, "quota-watch_20261021-120000.json");
         assert_eq!(
             files[0].last_modified.unwrap(),
             Utc.with_ymd_and_hms(2026, 10, 22, 1, 30, 0).unwrap()
@@ -471,13 +471,13 @@ mod tests {
         let xml = r#"<?xml version="1.0"?>
 <multistatus xmlns="DAV:">
   <response>
-    <href>/dav/quota-watch/services%20copy.json</href>
-    <propstat><prop><displayname>services copy.json</displayname></prop></propstat>
+    <href>/dav/quota-watch/quota-watch%20copy.json</href>
+    <propstat><prop><displayname>quota-watch copy.json</displayname></prop></propstat>
   </response>
 </multistatus>"#;
         let files = parse_propfind(xml).unwrap();
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].name, "services copy.json");
+        assert_eq!(files[0].name, "quota-watch copy.json");
         assert!(files[0].last_modified.is_none());
     }
 
@@ -486,6 +486,7 @@ mod tests {
         let xml = r#"<d:multistatus xmlns:d="DAV:">
   <d:response><d:href>/dav/quota-watch/notes.txt</d:href></d:response>
   <d:response><d:href>/dav/quota-watch/backup.json</d:href></d:response>
+  <d:response><d:href>/dav/quota-watch/services_20261021-120000.json</d:href></d:response>
 </d:multistatus>"#;
         assert!(parse_propfind(xml).unwrap().is_empty());
     }

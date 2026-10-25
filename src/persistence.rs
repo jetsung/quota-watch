@@ -5,41 +5,24 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-/// 配置文件路径：`~/.config/quota-notifier/quota-watch.json`（各平台遵循标准配置目录）。
+/// 配置文件路径：`~/.config/quota-watch/config.json`（各平台遵循标准配置目录，macOS 为
+/// `~/Library/Application Support/cn.gcli.quota-watch/`）。
+/// 导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名，仅本地文件名为 `config.json`。
 pub fn config_path() -> PathBuf {
-    if let Some(dirs) = directories::ProjectDirs::from("com", "quota-watch", "quota-notifier") {
-        return dirs.config_dir().join("quota-watch.json");
+    if let Some(dirs) = directories::ProjectDirs::from("cn", "gcli", "quota-watch") {
+        return dirs.config_dir().join("config.json");
     }
-    // 回退：$HOME/.config/quota-notifier/quota-watch.json
+    // 回退：$HOME/.config/quota-watch/config.json
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".config")
-        .join("quota-notifier")
-        .join("quota-watch.json")
+    home.join(".config").join("quota-watch").join("config.json")
 }
 
-/// 旧文件名 `services.json` 一次性迁移为 `quota-watch.json`。
-fn migrate_legacy_path(path: &std::path::Path) {
-    if path.exists() {
-        return;
-    }
-    let Some(dir) = path.parent() else {
-        return;
-    };
-    let legacy = dir.join("services.json");
-    if legacy.exists()
-        && let Err(e) = fs::rename(&legacy, path)
-    {
-        eprintln!("迁移旧配置文件失败: {}", e);
-    }
-}
-
-/// 启动加载：文件不存在返回默认状态；解析失败则备份为 `quota-watch.json.bak.<timestamp>` 并以空状态启动。
+/// 启动加载：文件不存在返回默认状态；解析失败则备份为 `config.json.bak.<timestamp>` 并以空状态启动。
 /// 返回值第二个元素为告警信息（用于写入通知日志 / Toast）。
 pub fn load() -> (PersistedState, Option<String>) {
     let path = config_path();
-    migrate_legacy_path(&path);
     if !path.exists() {
         return (PersistedState::default(), None);
     }
@@ -132,7 +115,7 @@ mod tests {
     fn save_then_load_roundtrip() {
         let dir = std::env::temp_dir().join(format!("quota-watch-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("quota-watch.json");
+        let path = dir.join("config.json");
 
         let state = PersistedState {
             services: vec![entry("openai"), entry("anthropic")],
@@ -176,27 +159,13 @@ mod tests {
     fn load_corrupted_file_backs_up() {
         let dir = std::env::temp_dir().join(format!("quota-watch-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("quota-watch.json");
+        let path = dir.join("config.json");
         std::fs::write(&path, "{ not valid json").unwrap();
 
         // 直接调用内部逻辑验证备份分支
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(serde_json::from_str::<PersistedState>(&content).is_err());
 
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn migrate_legacy_renames_services_json() {
-        let dir = std::env::temp_dir().join(format!("quota-watch-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let legacy = dir.join("services.json");
-        std::fs::write(&legacy, "{}").unwrap();
-
-        migrate_legacy_path(&dir.join("quota-watch.json"));
-
-        assert!(!legacy.exists());
-        assert!(dir.join("quota-watch.json").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -8,7 +8,7 @@
 src/
 ├── main.rs           # 入口：CLI 参数、配置加载、窗口创建、tick 引擎与托盘启动
 ├── models.rs         # ServiceEntry / AppState / 间隔表达式解析 / 校验
-├── persistence.rs    # 配置加载（损坏自动备份、旧文件名迁移）与原子保存
+├── persistence.rs    # 配置加载（损坏自动备份）与原子保存
 ├── timer_engine.rs   # 1s tick：决策引擎（C→A→B）与标志位管理
 ├── notifications.rs  # 通知服务抽象（notify-rust）与文案
 ├── update.rs         # GitHub Releases 版本检查、资产匹配、自升级（version/self-update 子命令 + UI 升级入口）
@@ -88,12 +88,11 @@ src/
 
 ## 4. 持久化（persistence.rs）
 
-- **路径**：`directories::ProjectDirs::from("com", "quota-watch", "quota-notifier")` 的 config 目录 + `quota-watch.json`；回退 `$HOME/.config/quota-notifier/quota-watch.json`。
-- **旧文件名迁移**：加载前若 `quota-watch.json` 不存在而 `services.json` 存在，则一次性 `rename` 为 `quota-watch.json`（`migrate_legacy_path`），用户数据无损。
+- **路径**：`directories::ProjectDirs::from("cn", "gcli", "quota-watch")` 的 config 目录 + `config.json`；回退 `$HOME/.config/quota-watch/config.json`（macOS 即 `~/Library/Application Support/cn.gcli.quota-watch/config.json`）。导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名（`quota-watch_<时间戳>.json`），仅本地文件名为 `config.json`。
 - **加载 `load()`**：
   - 文件不存在 → 默认空状态，无告警。
   - 解析成功 → 返回状态。
-  - 解析失败 → 原文件**重命名备份**为 `quota-watch.json.bak.<YYYYMMDD-HHMMSS>`，以空状态启动，返回告警消息。
+  - 解析失败 → 原文件**重命名备份**为 `config.json.bak.<YYYYMMDD-HHMMSS>`，以空状态启动，返回告警消息。
   - 读取失败 → 空状态 + 告警消息。
   - 告警消息在 GUI 启动后以 Toast 展示。
 - **保存 `save()`**：`to_string_pretty` → 写 `<path>.tmp`（`sync_all`）→ 原子 `rename`（Windows 上先删除旧文件）。失败时保留 `.tmp` 供排查，错误由 Toast 展示。
@@ -280,7 +279,7 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 
 - 客户端基于 `reqwest`（blocking）+ Basic Auth（用户名密码均为空时不带认证），30s 超时，UA `quota-watch/<版本>`。
 - **连接测试**：对配置的远程目录 URL 发 PROPFIND `Depth: 0`，状态成功即可用。
-- **列目录**：PROPFIND `Depth: 1` 解析 multistatus XML，仅保留配置文件（`is_services_file`：当前前缀 `quota-watch`，**兼容历史 `services` 前缀**，且以 `.json` 结尾），按修改时间降序。
+- **列目录**：PROPFIND `Depth: 1` 解析 multistatus XML，仅保留配置文件（`is_services_file`：`quota-watch` 前缀且以 `.json` 结尾，**不兼容历史 `services` 前缀**），按修改时间降序。
 - **上传**：文件名由 `timestamped_filename()` 生成为 `quota-watch_<YYYYMMDD-HHMMSS>.json`（不重名），PUT JSON 内容。**上传前 WebDAV 密码字段加密**：`encrypt_persisted` 用内嵌密钥的 XChaCha20-Poly1305（AEAD）加密，输出 `enc:v1:<base64(nonce||密文)>`，云端备份不含明文密码（内嵌密钥防云服务商侧直接读密码，不防反编译本程序者）。
 - **恢复**：GET 下载后解析 `PersistedState`，`decrypt_persisted` 解密密码（无 `enc:v1:` 前缀的历史明文备份原样兼容），再覆盖本地（含 webdav_config）——UI 层已加确认框。本地导入（7.10 导入与导出）同样兼容解密。
 - **删除**：DELETE 指定文件。
@@ -305,7 +304,7 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - `parse_interval_expr` 表达式、`next_reset_at`（整数/浮点/跨天）、倒计时格式、校验拒绝、AppState 增删改。
 - 置顶：`toggle_pin` 翻转与 `pinned_at` 写入/清空、旧 JSON 缺置顶字段反序列化为未置顶；列表复合排序（后置顶者在前、未置顶按 `next_reset_at`、取消置顶恢复原序、损坏数据 `pinned_at=None` 回退最末置顶位）。
 - 旧配置含废弃 `timezone` 字段可正常反序列化。
-- 持久化 roundtrip、文件不存在返回默认、损坏文件备份分支、旧 `services.json` 一次性迁移为 `quota-watch.json`（测试通过临时目录 + 环境变量隔离，不读真实用户配置）。
+- 持久化 roundtrip、文件不存在返回默认、损坏文件备份分支（测试通过临时目录 + 环境变量隔离，不读真实用户配置）。
 - `WebdavConfig` 序列化往返、WebDAV 客户端远程目录归一化。
 - 密码加密：密文 `enc:v1:` 前缀与 roundtrip（nonce 随机、不含明文）、历史明文透传、整份配置 `encrypt/decrypt_persisted` 往返、篡改密文拒绝、上传→下载→解密全链路集成测试。
 - 版本比较：`is_newer` 数值段比较、`version_key` 去 `v` 前缀/后缀、预发布段比较（beta.2 > beta.1、预发布 < 正式版、主版本段优先、标识符更多者更大）。

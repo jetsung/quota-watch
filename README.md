@@ -19,7 +19,7 @@
   - 服务主页 URL（可选）：配置后点击卡片标题即可在系统浏览器打开
   - **置顶**：卡片底部勾选框切换，置顶条目固定排在列表最前
 - **设置面板**（自绘标题栏右上角 ⚙ 按钮）：
-  - 通知开关、WebDAV 云端备份同步（上传 / 下载 / 删除云端备份，配置密码加密存储）
+  - 通知开关、WebDAV 云端备份同步（上传 / 下载 / 删除云端备份，云端列表仅识别 `quota-watch` 前缀的 `.json` 备份，配置密码加密存储）
   - 配置导入 / 导出
   - 关于页（版本号、检查更新、仓库与问题反馈链接）
 - **通知机制**：
@@ -74,15 +74,13 @@ quota-watch self-update
 
 ## 配置文件
 
-配置文件为各平台标准配置目录下的 `quota-watch.json`（项目路径 `quota-notifier`）：
+配置文件为各平台标准配置目录下的 `config.json`（导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名）：
 
 | 平台 | 路径 |
 | --- | --- |
-| Linux | `$HOME/.config/quota-notifier/quota-watch.json` |
-| macOS | `~/Library/Application Support/com.quota-watch.quota-notifier/quota-watch.json` |
-| Windows | `%APPDATA%\quota-notifier\config\quota-watch.json` |
-
-旧文件名 `services.json` 在首次启动时会自动迁移为 `quota-watch.json`。
+| Linux | `$HOME/.config/quota-watch/config.json` |
+| macOS | `~/Library/Application Support/cn.gcli.quota-watch/config.json` |
+| Windows | `%APPDATA%\gcli\quota-watch\config\config.json` |
 
 所有时间均以 UTC 存储、以系统本地时区展示；旧版本配置中的字段（如已废弃的 `timezone`）在反序列化时会被自动忽略。
 
@@ -98,7 +96,7 @@ cargo test    # 运行全部单元 / 集成测试
 src/
 ├── main.rs           # 入口：子命令分发、窗口创建、启动告警 Toast、tick 引擎
 ├── models.rs         # ServiceEntry / AppState / 持久化结构与校验
-├── persistence.rs    # 配置加载（损坏自动备份、旧文件名迁移）与原子保存
+├── persistence.rs    # 配置加载（损坏自动备份）与原子保存
 ├── notifications.rs  # 桌面通知抽象（notify-rust）与文案
 ├── timer_engine.rs   # 1s tick：决策（提醒/重置）与标志位管理
 ├── tray.rs           # 系统托盘（tray-icon）与窗口激活/隐藏
@@ -114,7 +112,7 @@ src/
     ├── service_list.rs / service_card.rs  # 服务列表与卡片渲染
     ├── footer.rs     # 底部“新建服务”按钮（通知开关已迁移至设置面板）
     ├── checkbox.rs   # 自绘勾选框（✓ 字符）
-    ├── settings.rs   # 设置面板（通知 / WebDAV 同步 / 关于）
+    ├── settings.rs   # 设置面板（通知 / WebDAV 同步 / 导入导出 / 关于）
     ├── toast.rs      # 应用内 Toast 提示（含升级操作按钮）
     └── modal.rs      # 新建/编辑表单（模式切换、回车保存）
 assets/
