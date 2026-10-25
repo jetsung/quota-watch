@@ -205,14 +205,23 @@ jobs:
           </plist>
           PLIST
 
+          # ad-hoc 签名（无需 Apple Developer 账号）：macOS Sequoia 15.1+ 的 LaunchServices
+          # 拒绝识别完全无签名的 .app（双击弹"选择应用"），签名后走标准 Gatekeeper
+          # 未公证警告流程（放行方式见 README）。不用 --deep：bundle 内仅主可执行文件
+          # 与资源，bundle 签名已覆盖主可执行文件。
+          codesign --force --sign - "$APP_DIR"
+          codesign --verify --strict --verbose=2 "$APP_DIR"
+
       - name: Create release tarballs
         run: |
           mkdir -p "${{ env.RELEASE_DIR }}"
           VER="${{ needs.extract-version.outputs.version }}"
           for arch in x86_64 aarch64; do
+            # 打包前 ad-hoc 签名：x86_64 链接器默认不签名，统一两架构签名状态
+            codesign --force --sign - target/$arch-apple-darwin/release/quota-watch
             tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
           done
-          # 未签名的 .app（Universal）；文件名不含 signed，作为未签名信号。
+          # .app（Universal）已 ad-hoc 签名（未公证）；文件名不含 signed。
           # 不含 apple-darwin 与单 arch 关键词，不会被应用内自更新选中（见 src/update.rs）
           tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal.app.tar.xz" "${{ env.APP_NAME }}.app"
       - name: Upload release artifacts

@@ -74,16 +74,16 @@ quota-watch self-update
 
 ## macOS 下载与首次运行
 
-本项目**无 Apple Developer 账号，无法提供公证（notarized）产物**，macOS 产物均未签名，首次运行会被 Gatekeeper 拦截一次，放行后不再拦截（这是无账号前提下的固有限制，并非构建问题）。
+本项目**无 Apple Developer 账号，无法提供公证（notarized）产物**，macOS 产物均为 **ad-hoc 签名（未公证）**，首次运行会被 Gatekeeper 拦截一次，放行后不再拦截（这是无账号前提下的固有限制，并非构建问题）。ad-hoc 签名本身不需要开发者账号；macOS Sequoia（15.1）起系统要求应用至少具备 ad-hoc 签名才会被识别为可启动应用，否则双击会弹出"选择应用"对话框。
 
 Release 提供两种 macOS 产物：
 
 | 产物 | 形态 | 签名状态 |
 | --- | --- | --- |
-| `quota-watch-v<版本>-x86_64-apple-darwin.tar.xz` / `quota-watch-v<版本>-aarch64-apple-darwin.tar.xz` | 裸二进制 tarball | 未签名 |
-| `quota-watch-v<版本>-universal.app.tar.xz` | `QuotaWatch.app`（Universal，含图标与 `Info.plist`） | 未签名 |
+| `quota-watch-v<版本>-x86_64-apple-darwin.tar.xz` / `quota-watch-v<版本>-aarch64-apple-darwin.tar.xz` | 裸二进制 tarball | ad-hoc 签名（未公证） |
+| `quota-watch-v<版本>-universal.app.tar.xz` | `QuotaWatch.app`（Universal，含图标与 `Info.plist`） | ad-hoc 签名（未公证） |
 
-macOS 用户建议优先使用 `*-universal.app.tar.xz`（解压即得 `QuotaWatch.app`）；裸二进制无票据属性，被拦后无法用 `xattr` 优雅放行。应用内 `self-update` 只认裸二进制 tarball 资产，`*.app.tar.xz` 不参与匹配，两者互不干扰。
+macOS 用户建议优先使用 `*-universal.app.tar.xz`（解压即得 `QuotaWatch.app`）；两种产物均为 ad-hoc 签名，首次运行被 Gatekeeper 拦截时都可用下述方式放行（`xattr` 去隔离命令对两者同样适用）。应用内 `self-update` 只认裸二进制 tarball 资产，`*.app.tar.xz` 不参与匹配，两者互不干扰。
 
 首次运行放行，两种路径等价，任选其一：
 
