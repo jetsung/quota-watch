@@ -1,0 +1,142 @@
+name: 'macOS 签名公证'
+description: >-
+  导入 Developer ID 证书并组装 .app，执行签名、公证与装订验证；
+  has_signing 为 "false" 时全部步骤跳过（未配置证书 Secrets 的回退路径）。
+  调用方需通过步骤级 env 传入证书与公证密钥 Secrets。
+
+inputs:
+  has_signing:
+    description: '是否执行签名公证（"true"/"false"，由 Secrets 是否配置决定）'
+    required: true
+  app_name:
+    description: '.app 名称（不含 .app 后缀）'
+    required: true
+  bundle_id:
+    description: 'CFBundleIdentifier'
+    required: true
+  version:
+    description: '写入 Info.plist 的版本号'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Import Developer ID certificate
+      if: inputs.has_signing == 'true'
+      shell: bash
+      run: |
+        CERT_PATH=$(mktemp -d)/cert.p12
+        KEYCHAIN_PATH=$(mktemp -d)/build.keychain-db
+        echo -n "$MACOS_CERT_P12" | base64 --decode > "$CERT_PATH"
+
+        # 创建并解锁临时钥匙串，导入 Developer ID 证书
+        security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        security import "$CERT_PATH" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+        security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+        # 提取签名身份，供后续 codesign 使用
+        IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+          | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+        if [ -z "$IDENTITY" ]; then
+          echo "::error::未在钥匙串中找到 Developer ID Application 证书"
+          exit 1
+        fi
+        echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+        echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+    - name: Import notary API key
+      if: inputs.has_signing == 'true'
+      shell: bash
+      run: |
+        # notarytool 自动在 ~/.appstoreconnect/private_keys 等固定路径搜索 key
+        mkdir -p ~/.appstoreconnect/private_keys
+        echo -n "$NOTARY_P8" | base64 --decode > "private_keys/AuthKey_${NOTARY_KEY_ID}.p8"
+        cp "private_keys/AuthKey_${NOTARY_KEY_ID}.p8" ~/.appstoreconnect/private_keys/
+
+    - name: Assemble .app bundle
+      if: inputs.has_signing == 'true'
+      shell: bash
+      run: |
+        APP_DIR="${{ inputs.app_name }}.app"
+        mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+
+        cp quota-watch "$APP_DIR/Contents/MacOS/quota-watch"
+
+        # PNG 生成 icns 图标
+        ICONSET=quota-watch.iconset
+        mkdir "$ICONSET"
+        SRC=assets/icons/quota-watch-256.png
+        for size in 16 32 64 128 256 512; do
+          sips -z $size $size "$SRC" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+          double=$((size * 2))
+          sips -z $double $double "$SRC" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+        done
+        iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/quota-watch.icns"
+
+        cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleName</key>              <string>${{ inputs.app_name }}</string>
+          <key>CFBundleDisplayName</key>       <string>Quota Watch</string>
+          <key>CFBundleIdentifier</key>        <string>${{ inputs.bundle_id }}</string>
+          <key>CFBundleVersion</key>           <string>${{ inputs.version }}</string>
+          <key>CFBundleShortVersionString</key><string>${{ inputs.version }}</string>
+          <key>CFBundleExecutable</key>        <string>quota-watch</string>
+          <key>CFBundleIconFile</key>          <string>quota-watch</string>
+          <key>CFBundlePackageType</key>       <string>APPL</string>
+          <key>LSMinimumSystemVersion</key>    <string>10.15</string>
+          <key>NSHighResolutionCapable</key>   <true/>
+          <key>NSHumanReadableCopyright</key>  <string>Apache-2.0</string>
+        </dict>
+        </plist>
+        PLIST
+
+    - name: Codesign with Developer ID
+      if: inputs.has_signing == 'true'
+      shell: bash
+      run: |
+        APP_DIR="${{ inputs.app_name }}.app"
+        # hardened runtime 是公证的强制要求
+        codesign --force --options runtime --timestamp \
+          --sign "$SIGN_IDENTITY" "$APP_DIR"
+        # 自更新资产：同时签名两条架构的裸二进制（保持原资产文件名不变）
+        for arch in x86_64 aarch64; do
+          codesign --force --options runtime --timestamp \
+            --sign "$SIGN_IDENTITY" "target/$arch-apple-darwin/release/quota-watch"
+        done
+        codesign --verify --strict --verbose=2 "$APP_DIR"
+
+    - name: Notarize and staple
+      if: inputs.has_signing == 'true'
+      shell: bash
+      run: |
+        APP_DIR="${{ inputs.app_name }}.app"
+        # 公证以 zip 为载体，-k 保留父目录、-X 不带额外属性
+        ditto -c -k --keepParent "$APP_DIR" QuotaWatch.zip
+
+        xcrun notarytool submit QuotaWatch.zip \
+          --key-id "$NOTARY_KEY_ID" \
+          --issuer "$NOTARY_ISSUER" \
+          --team-id "$APPLE_TEAM_ID" \
+          --wait
+
+        # 把公证票据钉进 .app，用户离线也能通过 Gatekeeper 校验
+        xcrun stapler staple "$APP_DIR"
+        xcrun stapler validate "$APP_DIR"
+
+    - name: Verify Gatekeeper assessment
+      if: inputs.has_signing == 'true'
+      shell: bash
+      run: |
+        spctl -a -vv "${{ inputs.app_name }}.app"
+
+    - name: Cleanup keychain
+      if: always() && env.KEYCHAIN_PATH != ''
+      shell: bash
+      run: |
+        security delete-keychain "$KEYCHAIN_PATH" || true

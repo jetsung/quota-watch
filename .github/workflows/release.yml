@@ -128,6 +128,12 @@ jobs:
   build-macos:
     needs: [extract-version]
     runs-on: macos-26
+    env:
+      APP_NAME: QuotaWatch
+      BUNDLE_ID: cn.jetsung.quota-watch
+      # 配置了 Developer ID 证书 Secrets 时自动签名公证并附加 .app 产物；
+      # 未配置则回退为未签名构建，不影响其余平台正常发布
+      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -157,12 +163,40 @@ jobs:
           for arch in x86_64 aarch64; do
             cargo build -p quota-watch --release --target $arch-apple-darwin
           done
+          # 合并为单个 Universal Binary（供 .app 打包使用）
+          lipo -create \
+            target/aarch64-apple-darwin/release/quota-watch \
+            target/x86_64-apple-darwin/release/quota-watch \
+            -output quota-watch
+          lipo -info quota-watch
+
+      - name: Sign and notarize
+        uses: ./.github/actions/macos-sign-notarize
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          NOTARY_P8: ${{ secrets.NOTARY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          has_signing: ${{ env.HAS_SIGNING }}
+          app_name: ${{ env.APP_NAME }}
+          bundle_id: ${{ env.BUNDLE_ID }}
+          version: ${{ needs.extract-version.outputs.version }}
+
       - name: Create release tarballs
         run: |
-          mkdir ${{ env.RELEASE_DIR }}
+          mkdir -p "${{ env.RELEASE_DIR }}"
+          VER="${{ needs.extract-version.outputs.version }}"
           for arch in x86_64 aarch64; do
-            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
+            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
           done
+          # 已公证的 .app（Universal）作为附加产物；裸二进制资产名不变，兼容应用内自更新
+          if [ "${{ env.HAS_SIGNING }}" = "true" ]; then
+            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal-signed.app.tar.xz" "${{ env.APP_NAME }}.app"
+          fi
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:

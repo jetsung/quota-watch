@@ -1,7 +1,10 @@
 name: Build macOS (artifact only)
 
 # 轻量 macOS 构建：仅手动触发，产出 x86_64 与 aarch64 可执行文件 tarball，
-# 不发布 release。用于按需获取 macOS 版本。
+# 不发布 release。用于按需获取 macOS 版本，以及手动测试签名公证流程。
+# 配置了 Developer ID 证书 Secrets 时（与 release.yml 共用同一套），
+# 额外执行签名公证并附加 .app（Universal）产物；未配置则回退为未签名构建。
+# 所需 Secrets 见 .github/actions/macos-sign-notarize/action.yml 与 release.yml。
 on:
   workflow_dispatch:
     inputs:
@@ -16,6 +19,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RELEASE_DIR: dist
+  APP_NAME: QuotaWatch
+  BUNDLE_ID: cn.jetsung.quota-watch
+  HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
 
 jobs:
   build-macos:
@@ -24,6 +30,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch || github.ref }}
+          submodules: true
       - name: Update Rust
         run: |
           rustup update
@@ -33,13 +40,45 @@ jobs:
           for arch in x86_64 aarch64; do
             rustup target add $arch-apple-darwin
           done
-      - name: Update submodules
-        run: git submodule update --init --recursive
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-macos-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-macos-
       - name: Build for MacOS
         run: |
           for arch in x86_64 aarch64; do
             cargo build -p quota-watch --release --target $arch-apple-darwin
           done
+          # 合并为单个 Universal Binary（供 .app 打包使用）
+          lipo -create \
+            target/aarch64-apple-darwin/release/quota-watch \
+            target/x86_64-apple-darwin/release/quota-watch \
+            -output quota-watch
+          lipo -info quota-watch
+      - name: Extract version
+        id: ver
+        run: echo "VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - name: Sign and notarize
+        uses: ./.github/actions/macos-sign-notarize
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          NOTARY_P8: ${{ secrets.NOTARY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          has_signing: ${{ env.HAS_SIGNING }}
+          app_name: ${{ env.APP_NAME }}
+          bundle_id: ${{ env.BUNDLE_ID }}
+          version: ${{ steps.ver.outputs.VER }}
       - name: Create tarballs
         run: |
           VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
@@ -47,6 +86,10 @@ jobs:
           for arch in x86_64 aarch64; do
             tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-${arch}-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
           done
+          # 已公证的 .app（Universal）作为附加测试产物
+          if [ "${{ env.HAS_SIGNING }}" = "true" ]; then
+            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal-signed.app.tar.xz" "${{ env.APP_NAME }}.app"
+          fi
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
