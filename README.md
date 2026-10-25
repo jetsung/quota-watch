@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **服务卡片列表**：按下次重置时间排序，每秒刷新倒计时；状态徽章一眼可辨
+- **服务卡片列表**：按置顶与下次重置时间复合排序（置顶区按置顶时间倒序），每秒刷新倒计时；状态徽章一眼可辨
   - ★ **正常**（绿底白字）
   - ☆ **即将重置**（褐底白字，进入提醒阈值后）
   - ● **重置中**（红底白字，已过重置点，等待下一 tick 滚动）
@@ -17,12 +17,18 @@
   - 周期提醒间隔（分钟）：首次提醒之后每隔 N 分钟再次提醒
   - 静音：抑制周期提醒，仅保留首次提醒
   - 服务主页 URL（可选）：配置后点击卡片标题即可在系统浏览器打开
+  - **置顶**：卡片底部勾选框切换，置顶条目固定排在列表最前
+- **设置面板**（自绘标题栏右上角 ⚙ 按钮）：
+  - 通知开关、WebDAV 云端备份同步（上传 / 下载 / 删除云端备份，配置密码加密存储）
+  - 配置导入 / 导出
+  - 关于页（版本号、检查更新、仓库与问题反馈链接）
 - **通知机制**：
   - 首次提醒（进入阈值时，一次）→ 周期提醒（按间隔重复）→ 重置自动滚动（不受静音与全局开关影响）
-  - 全局通知开关（Footer 左下角）：一键禁用所有桌面通知
+  - 全局通知开关（设置面板）：一键禁用所有桌面通知
   - 通知发送失败不影响倒计时循环，仅以 Toast 提示
 - **配置持久化**：自动保存到本地 JSON，应用重启后恢复；解析失败时自动备份并以空配置启动
-- **原生窗口**：系统标题栏承载软件名，固定宽度 400px，初始 / 最小高度 640px（高度可向上拉伸）
+- **系统托盘常驻**：缩小 / 关闭窗口即最小化到托盘（进程继续倒计时与提醒），左键点击托盘图标恢复窗口，右键菜单可显示 / 隐藏与退出
+- **原生窗口**：自绘标题栏（应用图标、软件名与设置 / 缩小 / 放大 / 关闭四键），请求尺寸 445×680px，宽度锁定、高度可向上拉伸
 
 ## 构建与运行
 
@@ -44,12 +50,13 @@ cargo build --release
 1. 点击右下角 **“新建服务”**，填写服务名与重置间隔；
 2. 选择输入模式（**下次重置时间** 或 **倒计时**）并填写重置时间点 / 剩余时长；
 3. 按需调整提醒阈值与周期提醒间隔（表单内回车等同点击“保存”）；
-4. 卡片右下角可 **编辑** / **删除**；勾选 **“静音重复提醒”** 仅保留首次提醒；
-5. Footer 左下角开关可整体禁用桌面通知（倒计时与自动重置不受影响）。
+4. 卡片右下角可 **编辑** / **删除**；勾选 **“静音重复提醒”** 仅保留首次提醒，勾选 **“置顶”** 可将卡片固定在列表最前；
+5. 点击标题栏右上角 ⚙ 打开 **设置面板**：可整体禁用桌面通知（倒计时与自动重置不受影响）、配置 WebDAV 云端同步、导入 / 导出配置；
+6. 缩小或关闭窗口后应用最小化到系统托盘继续运行，点击托盘图标即可恢复窗口，托盘右键菜单可退出应用。
 
 ## 命令行
 
-除图形界面外，应用提供两个子命令：
+除图形界面外，应用提供三个子命令：
 
 ```bash
 # 查看当前版本号
@@ -67,11 +74,15 @@ quota-watch self-update
 
 ## 配置文件
 
+配置文件为各平台标准配置目录下的 `quota-watch.json`（项目路径 `quota-notifier`）：
+
 | 平台 | 路径 |
 | --- | --- |
-| Linux | `$HOME/.config/quota-notifier/services.json` |
-| macOS | `~/Library/Application Support/quota-notifier/services.json` |
-| Windows | `%APPDATA%\quota-notifier\services.json` |
+| Linux | `$HOME/.config/quota-notifier/quota-watch.json` |
+| macOS | `~/Library/Application Support/com.quota-watch.quota-notifier/quota-watch.json` |
+| Windows | `%APPDATA%\quota-notifier\config\quota-watch.json` |
+
+旧文件名 `services.json` 在首次启动时会自动迁移为 `quota-watch.json`。
 
 所有时间均以 UTC 存储、以系统本地时区展示；旧版本配置中的字段（如已废弃的 `timezone`）在反序列化时会被自动忽略。
 
@@ -85,26 +96,39 @@ cargo test    # 运行全部单元 / 集成测试
 
 ```
 src/
-├── main.rs           # 入口：窗口创建、启动告警 Toast、tick 引擎
+├── main.rs           # 入口：子命令分发、窗口创建、启动告警 Toast、tick 引擎
 ├── models.rs         # ServiceEntry / AppState / 持久化结构与校验
-├── persistence.rs    # 配置加载（损坏自动备份）与原子保存
+├── persistence.rs    # 配置加载（损坏自动备份、旧文件名迁移）与原子保存
 ├── notifications.rs  # 桌面通知抽象（notify-rust）与文案
 ├── timer_engine.rs   # 1s tick：决策（提醒/重置）与标志位管理
-├── tray.rs           # 系统托盘（KSNI）与窗口激活/隐藏
-├── kwin.rs           # KWin D-Bus 窗口控制（Wayland 最小化/任务栏）
+├── tray.rs           # 系统托盘（tray-icon）与窗口激活/隐藏
+├── window_control.rs # 跨后端窗口可见性控制（KWin D-Bus → X11 EWMH → gpui 降级）
+├── kwin.rs           # KWin D-Bus 脚本（skipTaskbar 语义的 Wayland 实现）
+├── win32.rs          # Windows 专属：控制台附加、任务栏隐藏等
+├── update.rs         # self-update：GitHub Releases 检查、下载与原子替换
+├── webdav.rs         # WebDAV 云端备份（上传/下载/列表，配置加密）
 └── ui/
     ├── mod.rs        # RootView：列表组合与对话框交互
     ├── titlebar.rs   # 自绘标题栏与窗口控制键
     ├── header.rs / statusbar.rs  # 顶部标题与状态栏
     ├── service_list.rs / service_card.rs  # 服务列表与卡片渲染
-    ├── footer.rs     # 全局通知开关 + 新建服务
+    ├── footer.rs     # 底部“新建服务”按钮（通知开关已迁移至设置面板）
+    ├── checkbox.rs   # 自绘勾选框（✓ 字符）
+    ├── settings.rs   # 设置面板（通知 / WebDAV 同步 / 关于）
+    ├── toast.rs      # 应用内 Toast 提示（含升级操作按钮）
     └── modal.rs      # 新建/编辑表单（模式切换、回车保存）
 assets/
 ├── icons/            # 应用图标（svg + png）
-└── linux/
-    └── quota-watch.desktop  # Freedesktop 启动器
+├── linux/
+│   └── quota-watch.desktop  # Freedesktop 启动器
+└── debian/
+    └── postrm        # Debian 卸载脚本
 ```
 
 ## License
 
 本项目基于 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) 开源，完整文本见根目录 [LICENSE](LICENSE) 文件。
+
+## 仓库镜像
+
+[MyCode](https://git.jetsung.com/jetsung/quota-watch) ● [AtomGit](https://atomgit.com/jetsung/quota-watch) ● [GitHub](https://github.com/jetsung/quota-watch)
