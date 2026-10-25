@@ -90,11 +90,7 @@ pub struct SettingsView {
 }
 
 fn field_label(text: impl Into<SharedString>) -> impl IntoElement {
-    div()
-        .text_size(px(13.))
-        .font_weight(FontWeight::BOLD)
-        .mb_1()
-        .child(text.into())
+    div().text_size(px(13.)).mb_1().child(text.into())
 }
 
 /// 设置页按钮统一使用手型光标（组件库默认按钮为系统箭头）。
@@ -1094,7 +1090,6 @@ impl SettingsView {
                     .child(
                         pointer_button("save-webdav")
                             .label("保存连接配置")
-                            .font_weight(FontWeight::BOLD)
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.save_config(window, cx);
                             })),
@@ -1103,7 +1098,6 @@ impl SettingsView {
                         pointer_button("webdav-test")
                             .small()
                             .label("测试")
-                            .font_weight(FontWeight::BOLD)
                             .loading(testing)
                             .disabled(any_busy && !testing)
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -1115,7 +1109,6 @@ impl SettingsView {
                 pointer_button("webdav-upload")
                     .primary()
                     .label("上传当前配置")
-                    .font_weight(FontWeight::BOLD)
                     .w_full()
                     .loading(uploading)
                     .disabled(any_busy && !uploading)
@@ -1126,7 +1119,6 @@ impl SettingsView {
             .child(
                 pointer_button("webdav-list")
                     .label("查看云端列表")
-                    .font_weight(FontWeight::BOLD)
                     .w_full()
                     .loading(listing)
                     .disabled(any_busy && !listing)
@@ -1152,7 +1144,6 @@ impl SettingsView {
             .child(
                 pointer_button("config-import")
                     .label("导入配置")
-                    .font_weight(FontWeight::BOLD)
                     .w_full()
                     .disabled(any_busy)
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -1162,7 +1153,6 @@ impl SettingsView {
             .child(
                 pointer_button("config-export")
                     .label("导出配置")
-                    .font_weight(FontWeight::BOLD)
                     .w_full()
                     .disabled(any_busy)
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -1195,7 +1185,6 @@ impl SettingsView {
                 h_flex().pt_3().child(
                     pointer_button("check-update")
                         .label("检查更新")
-                        .font_weight(FontWeight::BOLD)
                         .rounded(px(18.))
                         .loading(self.checking_update)
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -1248,7 +1237,6 @@ impl Render for SettingsView {
                 div()
                     .id("settings-close-x")
                     .text_size(px(14.))
-                    .font_weight(FontWeight::BOLD)
                     .text_color(theme.muted_foreground)
                     .cursor_pointer()
                     .hover(|style| style.text_color(theme.foreground))
@@ -1275,7 +1263,6 @@ impl Render for SettingsView {
                             .w_full()
                             .text_center()
                             .text_size(px(13.))
-                            .when(selected, |el| el.font_weight(FontWeight::BOLD))
                             .child(tab.label()),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -1322,7 +1309,6 @@ impl Render for SettingsView {
                                 el.child(
                                     div()
                                         .text_size(px(12.))
-                                        .font_weight(FontWeight::BOLD)
                                         .text_color(theme.danger)
                                         .child(error),
                                 )

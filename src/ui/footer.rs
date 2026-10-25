@@ -1,7 +1,7 @@
 use gpui_kit::base::h_flex;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, ClickEvent, FontWeight, IntoElement, Window};
+use gpui_kit::{App, ClickEvent, IntoElement, Window};
 
 /// Footer：仅保留"新建服务"按钮（通知开关已迁移至设置面板）。
 pub fn render_footer(
@@ -19,7 +19,6 @@ pub fn render_footer(
             Button::new("add-service")
                 .primary()
                 .label("新建服务")
-                .font_weight(FontWeight::BOLD)
                 .on_click(on_add),
         )
 }

@@ -124,7 +124,6 @@ pub fn render_service_card(
                     .rounded_sm()
                     .bg(badge_bg)
                     .text_size(px(14.))
-                    .font_weight(gpui_kit::FontWeight::BOLD)
                     .text_color(gpui_kit::white())
                     .child(status_text),
             ),
@@ -136,10 +135,14 @@ pub fn render_service_card(
             .child(countdown),
     )
     .child(
-        div()
+        h_flex()
             .text_size(px(14.))
-            .font_weight(gpui_kit::FontWeight::BOLD)
-            .child(format!("下次重置: {}", next_local)),
+            .child(
+                div()
+                    .font_weight(gpui_kit::FontWeight::BOLD)
+                    .child("下次重置："),
+            )
+            .child(div().child(next_local)),
     )
     .child(
         h_flex()
@@ -177,7 +180,6 @@ pub fn render_service_card(
                         div()
                             .id(format!("edit-{}", id))
                             .text_size(px(13.))
-                            .font_weight(gpui_kit::FontWeight::BOLD)
                             .text_color(theme.colors.foreground)
                             .cursor_pointer()
                             .px_2()
@@ -196,7 +198,6 @@ pub fn render_service_card(
                         div()
                             .id(format!("delete-{}", id))
                             .text_size(px(13.))
-                            .font_weight(gpui_kit::FontWeight::BOLD)
                             .text_color(theme.colors.danger)
                             .cursor_pointer()
                             .px_2()

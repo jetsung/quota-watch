@@ -296,6 +296,7 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - `UpdateOutcome`：`AlreadyUpToDate`（已是最新） / `Updated`（已替换，重启后生效）。
 - 常量：`REPO_URL`（仓库主页）、`ISSUES_URL`（`issues/new` 问题反馈页）、`CURRENT_VERSION`（`CARGO_PKG_VERSION`）。
 - CLI `self-update` 子命令调用 `self_update_with_progress`，进度以 `\r` 原地刷新；UI"关于"标签"检查更新"发现新版本时 Toast 附加"立即升级"按钮，触发同一升级流程（见 7.10）。
+- **macOS 产物与资产匹配**：CI 产出三类 macOS 资产——`*-apple-darwin.tar.xz` 裸二进制（x86_64/aarch64）与 `*-universal.app.tar.xz`（Universal 未签名 `.app`，`CFBundleIdentifier` 为 `cn.gcli.quota-watch`，与 `persistence.rs` 应用标识一致）。本项目无 Apple Developer 账号，不提供公证产物；`.app` tarball 文件名不含 `apple-darwin` 与单 `arch` 关键词，`select_platform_asset` **不会匹配它**，自更新始终选择裸二进制 tarball，两者互不干扰（macOS 首次运行放行方式见 README）。
 
 ## 12. 测试规范
 

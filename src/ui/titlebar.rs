@@ -2,7 +2,7 @@ use gpui_kit::base::h_flex;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, ClickEvent, FontWeight, MouseButton, Window};
+use gpui_kit::{App, ClickEvent, MouseButton, Window};
 
 /// 自绘标题栏：左区应用图标 + 软件名，右区 设置/缩小/放大/关闭 四键。
 /// 空白区按下左键拖动移动窗口（双击忽略，不最大化）；
@@ -48,7 +48,6 @@ pub fn render_titlebar(
                 .child(
                     gpui_kit::div()
                         .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.foreground)
                         .child("配额重置提醒"),
                 ),

@@ -2,7 +2,7 @@ use gpui_kit::base::animation::EffectTransition;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
-use gpui_kit::{Anchor, AnyElement, App, Div, FontWeight, SharedString, Window, div, px};
+use gpui_kit::{Anchor, AnyElement, App, Div, SharedString, Window, div, px};
 use std::time::Duration;
 
 /// 应用内提示的显示状态（序号用于避免旧定时器清除新提示；
@@ -106,7 +106,6 @@ pub(crate) fn toast_card(message: SharedString, cx: &App) -> Div {
         .text_color(theme.popover_foreground)
         .text_center()
         .text_size(px(15.))
-        .font_weight(FontWeight::SEMIBOLD)
         .shadow_lg()
         .children(lines)
 }

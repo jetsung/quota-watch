@@ -50,11 +50,7 @@ pub struct AddEditView {
 }
 
 fn field_label(text: impl Into<SharedString>) -> impl IntoElement {
-    div()
-        .text_size(px(13.))
-        .font_weight(gpui_kit::FontWeight::BOLD)
-        .mb_1()
-        .child(text.into())
+    div().text_size(px(13.)).mb_1().child(text.into())
 }
 
 /// 按系统本地时区格式化 UTC 时间（表单预填/展示统一入口）。
@@ -410,7 +406,6 @@ impl Render for AddEditView {
             .child(
                 div()
                     .text_size(px(17.))
-                    .font_weight(gpui_kit::FontWeight::BOLD)
                     .text_color(theme.foreground)
                     .child(self.title.clone()),
             )
@@ -418,7 +413,6 @@ impl Render for AddEditView {
                 div()
                     .id("dialog-close-x")
                     .text_size(px(14.))
-                    .font_weight(gpui_kit::FontWeight::BOLD)
                     .text_color(theme.muted_foreground)
                     .cursor_pointer()
                     .hover(|d| d.text_color(theme.foreground))
@@ -449,7 +443,6 @@ impl Render for AddEditView {
                     .child(
                         Button::new("mode-next-reset")
                             .label("下次重置时间")
-                            .font_weight(gpui_kit::FontWeight::BOLD)
                             .when(
                                 self.reset_config_mode == models::ResetConfigMode::NextReset,
                                 |b| b.primary(),
@@ -461,7 +454,6 @@ impl Render for AddEditView {
                     .child(
                         Button::new("mode-countdown")
                             .label("倒计时")
-                            .font_weight(gpui_kit::FontWeight::BOLD)
                             .when(
                                 self.reset_config_mode == models::ResetConfigMode::Countdown,
                                 |b| b.primary(),
@@ -528,7 +520,6 @@ impl Render for AddEditView {
                 el.child(
                     div()
                         .text_size(px(12.))
-                        .font_weight(gpui_kit::FontWeight::BOLD)
                         .text_color(cx.theme().danger)
                         .child(err),
                 )
@@ -559,19 +550,15 @@ impl Render for AddEditView {
                     .flex_shrink_0()
                     .justify_end()
                     .gap_2()
-                    .child(
-                        Button::new("cancel")
-                            .label("取消")
-                            .font_weight(gpui_kit::FontWeight::BOLD)
-                            .on_click(cx.listener(move |_, _, window, cx| {
-                                window.close_all_dialogs(cx);
-                            })),
-                    )
+                    .child(Button::new("cancel").label("取消").on_click(cx.listener(
+                        move |_, _, window, cx| {
+                            window.close_all_dialogs(cx);
+                        },
+                    )))
                     .child(
                         Button::new("submit")
                             .primary()
                             .label("保存")
-                            .font_weight(gpui_kit::FontWeight::BOLD)
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                 this.submit(window, cx);
                             })),

@@ -2,7 +2,7 @@ use gpui_kit::base::h_flex;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, ElementId, FontWeight, IntoElement, ParentElement, Pixels, Styled, Window, div, px, white,
+    App, ElementId, IntoElement, ParentElement, Pixels, Styled, Window, div, px, white,
 };
 
 /// 自定义勾选框：勾选时显示“✓”字符（gpui-kit 的 Checkbox 组件勾选图标为硬编码
@@ -34,13 +34,10 @@ pub fn render_checkbox(
         .justify_center()
         .border_color(theme.foreground.opacity(0.45));
     if checked {
-        box_ = box_.bg(theme.primary).border_color(theme.primary).child(
-            div()
-                .text_size(px(11.))
-                .font_weight(FontWeight::BOLD)
-                .text_color(white())
-                .child("✓"),
-        );
+        box_ = box_
+            .bg(theme.primary)
+            .border_color(theme.primary)
+            .child(div().text_size(px(11.)).text_color(white()).child("✓"));
     }
     h_flex()
         .id(id)
@@ -51,7 +48,6 @@ pub fn render_checkbox(
         .child(box_)
         .child(
             div()
-                .font_weight(FontWeight::BOLD)
                 .text_color(theme.foreground)
                 .text_size(text_size)
                 .line_height(text_size)

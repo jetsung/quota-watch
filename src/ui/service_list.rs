@@ -105,16 +105,10 @@ fn empty_placeholder() -> AnyElement {
                 .gap_2()
                 .items_center()
                 .child(div().text_size(px(48.)).child("🕐"))
-                .child(
-                    div()
-                        .text_size(px(16.))
-                        .font_weight(gpui_kit::FontWeight::BOLD)
-                        .child("暂无服务"),
-                )
+                .child(div().text_size(px(16.)).child("暂无服务"))
                 .child(
                     div()
                         .text_size(px(13.))
-                        .font_weight(gpui_kit::FontWeight::BOLD)
                         .child("点击右下角 “新建服务” 添加第一个服务"),
                 ),
         )
