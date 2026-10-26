@@ -108,6 +108,21 @@ curl -fL "https://github.com/jetsung/quota-watch/releases/download/latest-macos/
    xattr -dr com.apple.quarantine /path/to/QuotaWatch.app
    ```
 
+### 排障：双击仍弹「选择应用（Choose Application）」
+
+若双击解压出的 `QuotaWatch.app` 弹「There is no application set to open the document / 选择应用」，说明是 **LaunchServices 数据库残留了旧版本应用的失效记录**（例如曾解压双击过签名修复之前的无签名产物），与当前产物无关——当前产物已在 macOS 26 的干净环境验证：无 quarantine 时双击直接启动，带 quarantine 时走标准「无法验证开发者」告警。依次尝试：
+
+```bash
+# 1. 去隔离并强制重新注册到 LaunchServices（多数情况到此即可）
+xattr -dr com.apple.quarantine /path/to/QuotaWatch.app
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /path/to/QuotaWatch.app
+
+# 2. 仍无效：删除该副本，换一个目录重新解压（避开 LS 对旧路径的记忆）
+
+# 3. 最后手段：重建 LaunchServices 数据库后注销重登
+sudo /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -kill -seed -r -f -all local,system,user
+```
+
 > 说明：应用内 `self-update` 只认裸二进制 tarball 资产，`*.app.tar.xz`（含固定名资产）不参与匹配，互不干扰。
 
 ## 配置文件
