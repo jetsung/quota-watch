@@ -80,7 +80,7 @@ Release 提供三种 macOS 产物：
 
 | 产物 | 形态 | 签名状态 |
 | --- | --- | --- |
-| `QuotaWatch-macOS-universal.app.tar.xz` | 固定名 Universal `QuotaWatch.app`，供下方 latest 直达链接 | ad-hoc 签名（未公证） |
+| `QuotaWatch-macOS-universal.app.tar.xz` | 固定名 Universal `QuotaWatch.app`，由滚动 Release `latest-macos` 承载 | ad-hoc 签名（未公证） |
 | `quota-watch-v<版本>-universal.app.tar.xz` | `QuotaWatch.app`（Universal，含图标与 `Info.plist`） | ad-hoc 签名（未公证） |
 | `quota-watch-v<版本>-x86_64-apple-darwin.tar.xz` / `quota-watch-v<版本>-aarch64-apple-darwin.tar.xz` | 裸二进制 tarball | ad-hoc 签名（未公证） |
 
@@ -89,11 +89,13 @@ Release 提供三种 macOS 产物：
 `curl` 下载与 `tar` 解压都不会写入 quarantine 隔离标记，Gatekeeper 全程不介入：
 
 ```bash
-curl -fL "https://github.com/jetsung/quota-watch/releases/latest/download/QuotaWatch-macOS-universal.app.tar.xz" \
+curl -fL "https://github.com/jetsung/quota-watch/releases/download/latest-macos/QuotaWatch-macOS-universal.app.tar.xz" \
   | tar -xJ -C /Applications
 ```
 
-执行后即得 `/Applications/QuotaWatch.app`，双击直接运行；无管理员权限时可把目标目录换成 `~/Applications`。升级到新版本时重跑本命令覆盖即可。
+`latest-macos` 是随每次发布自动更新的固定链接（GitHub 的 latest 语义不含 prerelease，本项目长期处于 beta 阶段，故用固定 tag 的滚动 Release 承载）。执行后即得 `/Applications/QuotaWatch.app`，双击直接运行；无管理员权限时可把目标目录换成 `~/Applications`。升级到新版本时重跑本命令覆盖即可。
+
+> 该链接自首次接入此机制的发布（v0.2.0-beta.2 起）可用；在那之前的版本请直接从 [Releases 页](https://github.com/jetsung/quota-watch/releases) 下载后按方式二放行。
 
 ### 方式二：浏览器下载，首次运行放行一次
 

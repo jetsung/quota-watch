@@ -310,3 +310,29 @@ jobs:
           prerelease: ${{ contains(needs.extract-version.outputs.tag, '-beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 维护固定 tag 的滚动 Release（latest-macos）：README 的零弹窗安装命令需要
+  # 恒定下载链接。GitHub 的 releases/latest 语义不含 prerelease，而本项目长期
+  # 处于 beta 阶段，latest 链接会一直指向旧正式版，因此用固定 tag 承载。
+  # 必须标记 prerelease：否则它会被 releases/latest API 认作最新版，
+  # 使应用内 self-update 拿到无效版本号（见 src/update.rs check_latest）。
+  update-latest-macos:
+    needs: [extract-version, create-release]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download macOS bundle asset
+        uses: actions/download-artifact@v8
+        with:
+          name: packages-macos
+      - name: Refresh rolling latest-macos release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -f quota-watch-v*-x86_64-apple-darwin.tar.xz \
+                quota-watch-v*-aarch64-apple-darwin.tar.xz \
+                quota-watch-v*-universal.app.tar.xz
+          gh release delete latest-macos --cleanup-tag --yes || true
+          gh release create latest-macos --prerelease \
+            --title "QuotaWatch macOS（滚动最新）" \
+            --notes "固定下载链接，随每次发布自动更新到最新版本（含 beta）。仅承载 macOS 安装资产，不影响应用内自更新。" \
+            "QuotaWatch-macOS-universal.app.tar.xz"
