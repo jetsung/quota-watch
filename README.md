@@ -74,25 +74,39 @@ quota-watch self-update
 
 ## macOS 下载与首次运行
 
-本项目**无 Apple Developer 账号，无法提供公证（notarized）产物**，macOS 产物均为 **ad-hoc 签名（未公证）**，首次运行会被 Gatekeeper 拦截一次，放行后不再拦截（这是无账号前提下的固有限制，并非构建问题）。ad-hoc 签名本身不需要开发者账号；macOS Sequoia（15.1）起系统要求应用至少具备 ad-hoc 签名才会被识别为可启动应用，否则双击会弹出"选择应用"对话框。
+本项目**无 Apple Developer 账号，无法提供公证（notarized）产物**，macOS 产物均为 **ad-hoc 签名（未公证）**。ad-hoc 签名保证系统把 `QuotaWatch.app` 识别为可启动应用（macOS Sequoia 15.1 起完全未签名的 .app 会被拒绝识别，双击弹"选择应用"）。剩余的 Gatekeeper「无法验证开发者」告警只针对**带 quarantine 隔离标记的文件**（浏览器下载时自动添加），无账号无法公证绕过——因此推荐方式一的终端命令下载（不产生 quarantine，全程零弹窗）；浏览器下载则按方式二放行一次即可。
 
-Release 提供两种 macOS 产物：
+Release 提供三种 macOS 产物：
 
 | 产物 | 形态 | 签名状态 |
 | --- | --- | --- |
-| `quota-watch-v<版本>-x86_64-apple-darwin.tar.xz` / `quota-watch-v<版本>-aarch64-apple-darwin.tar.xz` | 裸二进制 tarball | ad-hoc 签名（未公证） |
+| `QuotaWatch-macOS-universal.app.tar.xz` | 固定名 Universal `QuotaWatch.app`，供下方 latest 直达链接 | ad-hoc 签名（未公证） |
 | `quota-watch-v<版本>-universal.app.tar.xz` | `QuotaWatch.app`（Universal，含图标与 `Info.plist`） | ad-hoc 签名（未公证） |
+| `quota-watch-v<版本>-x86_64-apple-darwin.tar.xz` / `quota-watch-v<版本>-aarch64-apple-darwin.tar.xz` | 裸二进制 tarball | ad-hoc 签名（未公证） |
 
-macOS 用户建议优先使用 `*-universal.app.tar.xz`（解压即得 `QuotaWatch.app`）；两种产物均为 ad-hoc 签名，首次运行被 Gatekeeper 拦截时都可用下述方式放行（`xattr` 去隔离命令对两者同样适用）。应用内 `self-update` 只认裸二进制 tarball 资产，`*.app.tar.xz` 不参与匹配，两者互不干扰。
+### 方式一（推荐）：一条命令安装，双击零弹窗
 
-首次运行放行，两种路径等价，任选其一：
+`curl` 下载与 `tar` 解压都不会写入 quarantine 隔离标记，Gatekeeper 全程不介入：
 
-1. **官方放行**：右键点击 `QuotaWatch.app` → **打开** → 确认；或直接双击，在弹出的警告后进入 **系统设置 → 隐私与安全性**，点击 **仍要打开**。仅首次需要。
+```bash
+curl -fL "https://github.com/jetsung/quota-watch/releases/latest/download/QuotaWatch-macOS-universal.app.tar.xz" \
+  | tar -xJ -C /Applications
+```
+
+执行后即得 `/Applications/QuotaWatch.app`，双击直接运行；无管理员权限时可把目标目录换成 `~/Applications`。升级到新版本时重跑本命令覆盖即可。
+
+### 方式二：浏览器下载，首次运行放行一次
+
+浏览器下载 `quota-watch-v<版本>-universal.app.tar.xz` 并解压后，首次双击会弹「无法验证开发者」告警（仅首次），两种放行路径等价，任选其一：
+
+1. **官方放行**：右键点击 `QuotaWatch.app` → **打开** → 确认；或直接双击，在弹出的警告后进入 **系统设置 → 隐私与安全性**，点击 **仍要打开**。
 2. **一行命令彻底去隔离**（推荐技术用户）：
 
    ```bash
    xattr -dr com.apple.quarantine /path/to/QuotaWatch.app
    ```
+
+> 说明：应用内 `self-update` 只认裸二进制 tarball 资产，`*.app.tar.xz`（含固定名资产）不参与匹配，互不干扰。
 
 ## 配置文件
 

@@ -224,6 +224,10 @@ jobs:
           # .app（Universal）已 ad-hoc 签名（未公证）；文件名不含 signed。
           # 不含 apple-darwin 与单 arch 关键词，不会被应用内自更新选中（见 src/update.rs）
           tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal.app.tar.xz" "${{ env.APP_NAME }}.app"
+          # 固定名副本：README 的 releases/latest/download 直达链接需要恒定资产名。
+          # 同样不含 darwin/arch 关键词，不会被应用内自更新误选
+          cp "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal.app.tar.xz" \
+            "${{ env.RELEASE_DIR }}/QuotaWatch-macOS-universal.app.tar.xz"
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
