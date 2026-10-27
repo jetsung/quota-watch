@@ -22,7 +22,12 @@ fn claim_notification_identity() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = notify_rust::request_auth_blocking();
+        // request_auth_blocking 会等待用户响应系统授权弹窗（可能很久），
+        // 必须在后台线程执行，避免首次 tick 阻塞主线程；授权完成前的
+        // 首条通知可能被拒（UI 显示错误 Toast），后续通知正常投递。
+        std::thread::spawn(|| {
+            let _ = notify_rust::request_auth_blocking();
+        });
     });
 }
 
