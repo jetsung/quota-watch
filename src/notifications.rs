@@ -10,8 +10,25 @@ pub trait NotificationService: Send + Sync {
 /// 桌面通知实现（notify-rust）。
 pub struct DesktopNotificationService;
 
+/// macOS：首次通知前声明通知发送方身份。
+/// notify-rust 未设置应用时，mac-notification-sys 会执行 AppleScript
+/// `get id of application "use_default"`，导致系统弹出
+/// "Where is use_default? / Choose Application" 选择框；
+/// 先 set_application（bundle id 与 CI/配置目录一致）即跳过该查找。
+/// 即使设置失败也视为已设置，通知回退到库默认发送方，不再弹框。
+#[cfg(target_os = "macos")]
+fn claim_notification_identity() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = notify_rust::set_application("cn.gcli.quota-watch");
+    });
+}
+
 impl NotificationService for DesktopNotificationService {
     fn notify(&self, title: &str, body: &str) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        claim_notification_identity();
         notify_rust::Notification::new()
             .summary(title)
             .body(body)
