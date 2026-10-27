@@ -10,18 +10,19 @@ pub trait NotificationService: Send + Sync {
 /// 桌面通知实现（notify-rust）。
 pub struct DesktopNotificationService;
 
-/// macOS：首次通知前声明通知发送方身份。
-/// notify-rust 未设置应用时，mac-notification-sys 会执行 AppleScript
-/// `get id of application "use_default"`，导致系统弹出
-/// "Where is use_default? / Choose Application" 选择框；
-/// 先 set_application（bundle id 与 CI/配置目录一致）即跳过该查找。
-/// 即使设置失败也视为已设置，通知回退到库默认发送方，不再弹框。
+/// macOS：首次通知前完成 UNUserNotificationCenter 授权请求。
+/// 旧 NSUserNotification（legacy）路径在 macOS 26 上被 usernoted 以
+/// "Legacy client … Denying message 3" 拒绝，通知永远无法投递（且首次
+/// 发送前未设置应用身份会弹 "Where is use_default?" 选择框）。
+/// `preview-macos-un` 后端改走 UNUserNotificationCenter：
+/// - 需要 .app bundle（Info.plist 提供 bundle id，.app 分发天然满足）；
+/// - 需要一次授权请求；授权被拒或未打包运行时静默降级，不再弹窗、不阻塞。
 #[cfg(target_os = "macos")]
 fn claim_notification_identity() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = notify_rust::set_application("cn.gcli.quota-watch");
+        let _ = notify_rust::request_auth_blocking();
     });
 }
 
