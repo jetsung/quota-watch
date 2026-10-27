@@ -56,7 +56,7 @@ pub fn spawn_tray(cx: &mut App, window: AnyWindowHandle, visible: Arc<AtomicBool
     .expect("创建托盘菜单失败");
     let tray = TrayIconBuilder::new()
         .with_id(TRAY_ID)
-        .with_tooltip("配额重置提醒")
+        .with_tooltip("配置重置提醒")
         .with_icon(load_icon())
         .with_menu(Box::new(menu))
         .build()

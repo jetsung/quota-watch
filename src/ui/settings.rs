@@ -511,7 +511,10 @@ impl SettingsView {
                                 // 立即静默追赶（与启动时一致，不发通知）。否则下一个 1s tick 会对
                                 // 每个过期服务同步连发"配额已重置"桌面通知——macOS 上每条在主
                                 // 线程阻塞最多 2 秒，恢复即刻表现为界面卡死。
-                                crate::timer_engine::run_startup_catchup(app_state, chrono::Utc::now());
+                                crate::timer_engine::run_startup_catchup(
+                                    app_state,
+                                    chrono::Utc::now(),
+                                );
                                 Ok(())
                             },
                             move |message, cx| {
@@ -1183,7 +1186,7 @@ impl SettingsView {
                     .text_size(px(15.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.foreground)
-                    .child("配额重置提醒"),
+                    .child("配置重置提醒"),
             )
             .child(
                 div()

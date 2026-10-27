@@ -13,7 +13,7 @@ src/
 ├── notifications.rs  # 通知服务抽象（notify-rust）与文案
 ├── update.rs         # GitHub Releases 版本检查、资产匹配、自升级（version/self-update 子命令 + UI 升级入口）
 ├── tray.rs           # 系统托盘（KSNI）与窗口激活/隐藏
-├── window_control.rs # 跨后端窗口控制：隐藏到托盘 / 恢复 / 最大化（KWin 优先，X11/EWMH 回退）
+├── window_control.rs # 跨后端窗口控制：隐藏到托盘 / 恢复（KWin 优先，X11/EWMH 回退）；最大化切换已交还系统标题栏
 ├── kwin.rs           # KWin D-Bus 脚本窗口控制（Wayland）
 ├── win32.rs          # Windows 平台适配
 └── ui/
@@ -140,7 +140,7 @@ src/
 
 ## 7. UI 功能
 
-- **全局字重规范（"最少粗体"策略）**：除保留项外，所有 UI 文本（按钮文字、设置菜单项文字、状态徽章、对话框标题与子标题、表单字段标签与模式切换标签、section 标题、错误文本、空状态占位文案、Toast 文字、复选框勾号与标签）均使用常规字重。保留 `BOLD` 的元素仅限：主窗体服务卡片的服务名（含置顶前缀）与倒计时数字；设置各单页窗体标题栏的窗体标题（"桌面通知"/"备份与恢复"/"导入与导出"/"关于"）；设置"关于"窗体的软件标题"配额重置提醒"；服务卡片"下次重置："行的标签部分（时间值为常规字重）。字号、颜色、间距、布局等其他视觉属性不受此策略约束。
+- **全局字重规范（"最少粗体"策略）**：除保留项外，所有 UI 文本（按钮文字、设置菜单项文字、状态徽章、对话框标题与子标题、表单字段标签与模式切换标签、section 标题、错误文本、空状态占位文案、Toast 文字、复选框勾号与标签）均使用常规字重。保留 `BOLD` 的元素仅限：主窗体服务卡片的服务名（含置顶前缀）与倒计时数字；设置各单页窗体标题栏的窗体标题（"桌面通知"/"备份与恢复"/"导入与导出"/"关于"）；设置"关于"窗体的软件标题"配置重置提醒"；服务卡片"下次重置："行的标签部分（时间值为常规字重）。字号、颜色、间距、布局等其他视觉属性不受此策略约束。
 
 ### 7.1 窗口（main.rs / ui/mod.rs）
 
@@ -149,6 +149,7 @@ src/
 - **系统标题栏**（三平台统一，不设置 `window_decorations`，默认 Server 装饰）：拖动、最大化/还原/关闭均由系统标题栏提供；无自绘标题栏，不存在双层外壳。
 - X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=445，高度 [680, 16384]），避免被 gpui-fast 后端覆盖；高度方向可调，与系统标题栏最大化不冲突。
 - `app_id = "quota-watch"`（Wayland/KWin 托盘脚本按 resourceClass 匹配）。
+- 窗口标题（`titlebar.title` / X11 `WM_NAME`·`_NET_WM_NAME` / Wayland 窗口标题）三平台统一为"配置重置提醒"；技术标识符（`app_id`、crate 名、配置目录、WebDAV 前缀等）不随软件名变更。
 - **关闭拦截**：`on_window_should_close` 阻止真正关闭，改为"最小化到托盘"（`window_control::hide_to_tray`：最小化 + 隐藏任务栏图标，KWin 优先、X11/EWMH 回退，进程常驻托盘）。
 
 ### 7.2 设置菜单入口（statusbar.rs，Header 已移除）
@@ -242,7 +243,7 @@ src/
 ## 8. 系统托盘（tray.rs）
 
 - `tray-icon` crate，Linux 走 **KSNI** 后端（D-Bus StatusNotifierItem，不依赖 GTK 事件循环）。
-- 图标：内嵌 `assets/icons/quota-watch-128.png`；tooltip"配额重置提醒"。
+- 图标：内嵌 `assets/icons/quota-watch-128.png`；tooltip"配置重置提醒"。
 - 事件（TrayIconEvent + MenuEvent）经 crossbeam channel 投递，后台 task 每 100ms 轮询消费。
 - **左键单击**：恢复并置顶激活窗口（`window_control::restore_from_tray`：先清 SKIP_TASKBAR 再激活，X11 经 EWMH `_NET_ACTIVE_WINDOW`；Wayland 走 KWin 脚本），置可见标志。
 - **右键菜单**：
@@ -294,7 +295,7 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - `UpdateOutcome`：`AlreadyUpToDate`（已是最新） / `Updated`（已替换，重启后生效）。
 - 常量：`REPO_URL`（仓库主页）、`ISSUES_URL`（`issues/new` 问题反馈页）、`CURRENT_VERSION`（`CARGO_PKG_VERSION`）。
 - CLI `self-update` 子命令调用 `self_update_with_progress`，进度以 `\r` 原地刷新；UI"关于"标签"检查更新"发现新版本时 Toast 附加"立即升级"按钮，触发同一升级流程（见 7.10）。
-- **macOS 产物与资产匹配**：CI 产出三类 macOS 资产——`*-apple-darwin.tar.xz` 裸二进制（x86_64/aarch64）与 `*-universal.app.tar.xz`（Universal ad-hoc 签名、未公证的 `.app`，`CFBundleIdentifier` 为 `cn.gcli.quota-watch`，与 `persistence.rs` 应用标识一致）。本项目无 Apple Developer 账号，不提供公证产物，仅做零成本 ad-hoc 签名（macOS Sequoia 15.1+ 的 LaunchServices 拒绝识别完全无签名的 `.app`，双击会弹"选择应用"）；`.app` tarball 文件名不含 `apple-darwin` 与单 `arch` 关键词，`select_platform_asset` **不会匹配它**，自更新始终选择裸二进制 tarball，两者互不干扰（macOS 首次运行放行方式见 README）。
+- **macOS 产物与资产匹配**：CI 产出三类 macOS 资产——`*-apple-darwin.tar.xz` 裸二进制（x86_64/aarch64，ad-hoc 签名）与 `*-universal.app.tar.xz`（Universal ad-hoc 签名、未公证的 `.app`，`CFBundleIdentifier` 为 `cn.gcli.quota-watch`，与 `persistence.rs` 应用标识一致）。本项目无 Apple Developer 账号，不提供公证产物，仅做零成本 ad-hoc 签名（`codesign --force --sign -` + `codesign --verify` 自检）；`.app` 与裸二进制均经签名，macOS Sequoia 15.1+ 下可被 LaunchServices/Gatekeeper 识别（双击 `.app` 走标准未公证警告流程，不再弹"选择应用"）。`.app` tarball 文件名不含 `apple-darwin` 与单 `arch` 关键词，`select_platform_asset` **不会匹配它**，自更新始终选择裸二进制 tarball，两者互不干扰（macOS 首次运行放行方式见 README）。
 
 ## 12. 测试规范
 
