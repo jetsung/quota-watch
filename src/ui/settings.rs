@@ -507,6 +507,11 @@ impl SettingsView {
                             cx,
                             move |app_state, _| {
                                 *app_state = AppState::from_persisted(next.clone());
+                                // 整体替换清空了运行时标志；备份中的 last_reset_time 可能已过期，
+                                // 立即静默追赶（与启动时一致，不发通知）。否则下一个 1s tick 会对
+                                // 每个过期服务同步连发"配额已重置"桌面通知——macOS 上每条在主
+                                // 线程阻塞最多 2 秒，恢复即刻表现为界面卡死。
+                                crate::timer_engine::run_startup_catchup(app_state, chrono::Utc::now());
                                 Ok(())
                             },
                             move |message, cx| {
@@ -663,6 +668,9 @@ impl SettingsView {
                         app,
                         move |app_state, _| {
                             *app_state = AppState::from_persisted(next.clone());
+                            // 与 WebDAV 恢复相同：替换后立即静默追赶过期条目，
+                            // 避免下一个 tick 的"配额已重置"通知风暴阻塞主线程。
+                            crate::timer_engine::run_startup_catchup(app_state, chrono::Utc::now());
                             Ok(())
                         },
                         move |message, app| {
