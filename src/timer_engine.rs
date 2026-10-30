@@ -143,7 +143,22 @@ pub fn run_tick(
                 true,
             ),
             Decision::Recurring { minutes_left } => {
-                (title_recurring(&entry.service_name, *minutes_left), false)
+                // 文案分级：仅当剩余恰好等于周期提醒间隔（最后一个整间隔警告点）
+                // 使用"即将重置！还剩 Y 分钟"；其余（剩余 > 或 < 间隔）沿用
+                // "将在 X 分钟后重置"。到点仅发 Condition C。
+                let remaining_secs = (entry.next_reset_at() - now).num_seconds();
+                let interval_secs = entry.secondary_reminder_interval_minutes as i64 * 60;
+                if remaining_secs == interval_secs {
+                    (title_recurring(&entry.service_name, *minutes_left), false)
+                } else {
+                    (
+                        title_first_alert(
+                            &entry.service_name,
+                            (*minutes_left).min(u32::MAX as u64) as u32,
+                        ),
+                        false,
+                    )
+                }
             }
             _ => continue,
         };
@@ -442,6 +457,75 @@ mod tests {
         let fresh = st.services.iter().find(|s| s.id == fresh_id).unwrap();
         assert_eq!(fresh.last_reset_time, t0 + chrono::Duration::hours(8));
         assert!(st.flags(fresh_id).first_alert_sent);
+    }
+
+    #[test]
+    fn recurring_title_uses_first_alert_when_unaligned() {
+        // 首次提醒在非整分边界触发后，周期提醒的剩余时间不会恰好等于间隔，
+        // 此时（含剩余 < 间隔的最后窗口）仍沿用"将在 X 分钟后重置"文案
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
+        let mut state = state_with(entry(1.0, 30, 10, false), true);
+        let mock = MockNotificationService::default();
+
+        // 剩余 27 分钟 → A
+        run_tick(&mut state, t0 + chrono::Duration::minutes(33), &mock);
+        // 剩余 17 分钟（≠ 间隔 10，距上次提醒满 10 分钟）→ 周期提醒用 A 文案
+        run_tick(&mut state, t0 + chrono::Duration::minutes(43), &mock);
+        // 剩余 7 分钟（≠ 间隔 10）→ 仍用 A 文案
+        run_tick(&mut state, t0 + chrono::Duration::minutes(53), &mock);
+        // 到点 → 仅 C
+        run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
+
+        let titles = mock.titles_snapshot();
+        assert_eq!(titles.len(), 4);
+        assert_eq!(titles[0], "[test] 将在 27 分钟后重置");
+        assert_eq!(titles[1], "[test] 将在 17 分钟后重置");
+        assert_eq!(titles[2], "[test] 将在 7 分钟后重置");
+        assert_eq!(titles[3], "[test] 配额已重置");
+    }
+
+    #[test]
+    fn recurring_title_tiers_by_remaining() {
+        // 重置间隔 1h、阈值 30、周期提醒间隔 10；文案按剩余时间分级
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
+        let mut state = state_with(entry(1.0, 30, 10, false), true);
+        let mock = MockNotificationService::default();
+
+        // 剩余 25 分钟 → A 首次提醒"将在 25 分钟后重置"
+        run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
+        // 剩余 15 分钟（> 间隔 10，距上次提醒满 10 分钟）→ 周期提醒用 A 文案
+        run_tick(&mut state, t0 + chrono::Duration::minutes(45), &mock);
+        // 剩余 10 分钟（= 间隔，距上次提醒 5 分钟，但 last_alert_at 已是 0:45…）
+        // 距上次提醒不足 10 分钟 → 无动作
+        run_tick(&mut state, t0 + chrono::Duration::minutes(50), &mock);
+        // 距上次提醒满 10 分钟且剩余 0（重置优先）→ 仅 C
+        run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
+
+        let titles = mock.titles_snapshot();
+        assert_eq!(titles.len(), 3);
+        assert_eq!(titles[0], "[test] 将在 25 分钟后重置");
+        assert_eq!(titles[1], "[test] 将在 15 分钟后重置");
+        assert_eq!(titles[2], "[test] 配额已重置");
+    }
+
+    #[test]
+    fn recurring_title_switches_at_boundary() {
+        // 边界：剩余恰好等于周期提醒间隔时切换为"即将重置"文案
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
+        let mut state = state_with(entry(1.0, 30, 10, false), true);
+        let mock = MockNotificationService::default();
+
+        // 剩余 25 分钟 → A
+        run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
+        // 剩余 10 分钟（= 间隔，距上次提醒 15 分钟 ≥ 10）→ 周期提醒，切换"即将重置"
+        run_tick(&mut state, t0 + chrono::Duration::minutes(50), &mock);
+        // 剩余 5 分钟，距上次提醒 5 分钟 → 无动作
+        run_tick(&mut state, t0 + chrono::Duration::minutes(55), &mock);
+
+        let titles = mock.titles_snapshot();
+        assert_eq!(titles.len(), 2);
+        assert_eq!(titles[0], "[test] 将在 25 分钟后重置");
+        assert_eq!(titles[1], "[test] 即将重置！还剩 10 分钟");
     }
 
     #[test]

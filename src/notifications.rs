@@ -45,11 +45,12 @@ impl NotificationService for DesktopNotificationService {
     }
 }
 
-/// 测试用 Mock：记录调用次数（按序号可断言）。
+/// 测试用 Mock：记录调用次数与标题（按序号可断言）。
 #[derive(Default)]
 #[allow(dead_code)] // 仅测试使用，bin 编译时静默
 pub struct MockNotificationService {
     pub calls: AtomicUsize,
+    pub titles: std::sync::Mutex<Vec<String>>,
 }
 
 impl MockNotificationService {
@@ -57,18 +58,26 @@ impl MockNotificationService {
     pub fn call_count(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
+
+    #[allow(dead_code)]
+    pub fn titles_snapshot(&self) -> Vec<String> {
+        self.titles.lock().unwrap().clone()
+    }
 }
 
 impl NotificationService for MockNotificationService {
-    fn notify(&self, _title: &str, _body: &str) -> anyhow::Result<()> {
+    fn notify(&self, title: &str, _body: &str) -> anyhow::Result<()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.titles.lock().unwrap().push(title.to_string());
         Ok(())
     }
 }
 
 /// 通知文案（Decision 4）：
 /// - Condition A: "[Service] 将在 X 分钟后重置"
-/// - Condition B: "[Service] 即将重置！还剩 Y 分钟"
+/// - Condition B: 触发时机不变（每满周期提醒间隔）；标题按剩余时间分级：
+///   剩余 = 周期提醒间隔 → "[Service] 即将重置！还剩 Y 分钟"，
+///   其余（剩余 > 或 < 间隔）→ "[Service] 将在 X 分钟后重置"
 ///
 /// 正文附加本地时区 next_reset_at。
 pub fn title_first_alert(service_name: &str, minutes: u32) -> String {
