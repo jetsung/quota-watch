@@ -10,8 +10,8 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Entity, Focusable as _, IntoElement, ParentElement,
-    Render, SharedString, Window, div, px,
+    AnyElement, App, ClickEvent, Context, Entity, Focusable as _, FontWeight, IntoElement,
+    ParentElement, Render, SharedString, Window, div, px,
 };
 use uuid::Uuid;
 
@@ -406,6 +406,7 @@ impl Render for AddEditView {
             .child(
                 div()
                     .text_size(px(17.))
+                    .font_weight(FontWeight::BOLD)
                     .text_color(theme.foreground)
                     .child(self.title.clone()),
             )

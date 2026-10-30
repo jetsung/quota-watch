@@ -183,12 +183,19 @@ impl RootView {
     fn open_settings(&mut self, page: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.state.clone();
         let view = cx.new(|cx| SettingsView::new(window, cx, state, page));
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, window, _| {
             // overlay_closable(false)：点击遮罩/主窗体不关闭，仅可通过面板上的“关闭”按钮退出
+            // 垂直居中：按视口高度与窗体总高（内容区 + 标题栏/内边距固定增量）换算 margin_top，
+            // 对齐删除确认弹窗的换算先例；窗口过矮时保底 24px。
+            let total_h =
+                px(page.content_height()) + px(crate::ui::settings::SETTINGS_DIALOG_CHROME);
+            let margin_top = ((window.viewport_size().height - total_h) / 2.).max(px(24.));
             dialog
                 .overlay(true)
                 .overlay_closable(false)
                 .close_button(false)
+                .width(px(520.))
+                .margin_top(margin_top)
                 .child(view.clone())
         });
     }

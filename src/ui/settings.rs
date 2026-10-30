@@ -44,14 +44,20 @@ impl SettingsTab {
 
     /// 内容区高度按页面分级：内容最多的备份页保持 460，其余按内容量收紧，
     /// 避免低内容页面出现大面积空白（外层仍受 max_h 580 约束）。
-    fn content_height(self) -> f32 {
+    /// 各值在页面实际内容高度上保留少量余量，避免出现非预期滚动条。
+    pub(crate) fn content_height(self) -> f32 {
         match self {
             Self::BackupSync => 460.,
-            Self::About => 320.,
-            Self::Notifications | Self::ImportExport => 240.,
+            Self::About => 170.,
+            Self::ImportExport => 140.,
+            Self::Notifications => 70.,
         }
     }
 }
+
+/// 设置窗体内容区以外的固定高度（标题栏 + p_3 上下内边距 + gap_3 间距），
+/// 供 open_settings 按视口高度换算弹窗垂直居中使用。
+pub(crate) const SETTINGS_DIALOG_CHROME: f32 = 60.;
 
 /// 当前进行中的 WebDAV 操作（用于按钮 loading 与全局禁用）。
 #[derive(Debug, Clone, PartialEq, Eq)]
