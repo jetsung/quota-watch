@@ -91,7 +91,7 @@ pub fn render_statusbar(
                         ))
                         .child(item(
                             "settings-menu-notifications",
-                            "桌面通知",
+                            "通知提醒",
                             SettingsAction::OpenPage(SettingsTab::Notifications),
                         ))
                         .child(item(

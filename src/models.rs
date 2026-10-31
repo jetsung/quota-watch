@@ -231,7 +231,30 @@ pub struct WebdavConfig {
     pub remote_dir: String,
 }
 
-/// 持久化结构：仅序列化服务列表 + 全局开关 + WebDAV 配置。
+/// 提醒内容模板（全局一份，持久化存储），三类提醒各自独立配置。
+/// 占位符：`{service}` 服务名、`{minutes}` 剩余分钟数、`{next_reset}` 本地时区下次重置时间。
+/// 未知占位符渲染时原样保留。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReminderTemplate {
+    /// 首次提醒（Condition A）标题模板。
+    pub title_first_alert: String,
+    /// 周期提醒（Condition B）标题模板。
+    pub title_recurring: String,
+    /// 重置提醒（Condition C）标题模板。
+    pub title_reset: String,
+}
+
+impl Default for ReminderTemplate {
+    fn default() -> Self {
+        ReminderTemplate {
+            title_first_alert: "[{service}] 将在 {minutes} 分钟后重置".into(),
+            title_recurring: "[{service}] 即将重置！还剩 {minutes} 分钟".into(),
+            title_reset: "[{service}] 配额已重置".into(),
+        }
+    }
+}
+
+/// 持久化结构：仅序列化服务列表 + 全局开关 + WebDAV 配置 + 提醒模板。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersistedState {
     pub services: Vec<ServiceEntry>,
@@ -239,6 +262,9 @@ pub struct PersistedState {
     /// 旧配置无此字段时为 None（向后兼容）。
     #[serde(default)]
     pub webdav_config: Option<WebdavConfig>,
+    /// 旧配置无此字段时使用默认模板（向后兼容）。
+    #[serde(default)]
+    pub reminder_template: ReminderTemplate,
 }
 
 /// 全局状态变更事件：`mutate` 每次成功变更后发射，供 UI 监听刷新。
@@ -255,6 +281,7 @@ pub struct AppState {
     pub runtime: HashMap<Uuid, RuntimeFlags>,
     pub global_notifications_enabled: bool,
     pub webdav_config: Option<WebdavConfig>,
+    pub reminder_template: ReminderTemplate,
 }
 
 impl AppState {
@@ -264,6 +291,7 @@ impl AppState {
             runtime: HashMap::new(),
             global_notifications_enabled: p.global_notifications_enabled,
             webdav_config: p.webdav_config,
+            reminder_template: p.reminder_template,
         }
     }
 
@@ -272,6 +300,7 @@ impl AppState {
             services: self.services.clone(),
             global_notifications_enabled: self.global_notifications_enabled,
             webdav_config: self.webdav_config.clone(),
+            reminder_template: self.reminder_template.clone(),
         }
     }
 

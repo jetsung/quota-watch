@@ -1,7 +1,5 @@
 use crate::models::{AppState, RuntimeFlags, ServiceEntry};
-use crate::notifications::{
-    NotificationService, body_with_next_reset, title_first_alert, title_recurring, title_reset,
-};
+use crate::notifications::{NotificationService, body_with_next_reset, render_title};
 use chrono::{DateTime, Utc};
 use gpui_kit::{App, Entity, Task};
 
@@ -90,6 +88,10 @@ pub fn run_tick(
 ) -> TickOutcome {
     let global = state.global_notifications_enabled;
     let mut out = TickOutcome::default();
+    // 模板快照：避免与后续可变借用冲突；每次 tick 读取最新配置，保存后即时生效
+    let tpl_first = state.reminder_template.title_first_alert.clone();
+    let tpl_recurring = state.reminder_template.title_recurring.clone();
+    let tpl_reset = state.reminder_template.title_reset.clone();
 
     // 阶段一：收集决策（不可变借用）
     let decisions: Vec<(ServiceEntry, Decision)> = state
@@ -122,7 +124,7 @@ pub fn run_tick(
             if global {
                 let interval_secs = (entry.interval_hours * 3600.0).round() as i64;
                 let next_reset_after = *new_last_reset + chrono::Duration::seconds(interval_secs);
-                let title = title_reset(&entry.service_name);
+                let title = render_title(&tpl_reset, &entry.service_name, 0, next_reset_after);
                 let body = body_with_next_reset(next_reset_after);
                 if notifier.notify(&title, &body).is_err() {
                     out.error_messages
@@ -136,30 +138,23 @@ pub fn run_tick(
     for (entry, decision) in &decisions {
         let (title, is_first) = match decision {
             Decision::FirstAlert { minutes_left } => (
-                title_first_alert(
+                render_title(
+                    &tpl_first,
                     &entry.service_name,
-                    (*minutes_left).min(u32::MAX as u64) as u32,
+                    *minutes_left,
+                    entry.next_reset_at(),
                 ),
                 true,
             ),
-            Decision::Recurring { minutes_left } => {
-                // 文案分级：仅当剩余恰好等于周期提醒间隔（最后一个整间隔警告点）
-                // 使用"即将重置！还剩 Y 分钟"；其余（剩余 > 或 < 间隔）沿用
-                // "将在 X 分钟后重置"。到点仅发 Condition C。
-                let remaining_secs = (entry.next_reset_at() - now).num_seconds();
-                let interval_secs = entry.secondary_reminder_interval_minutes as i64 * 60;
-                if remaining_secs == interval_secs {
-                    (title_recurring(&entry.service_name, *minutes_left), false)
-                } else {
-                    (
-                        title_first_alert(
-                            &entry.service_name,
-                            (*minutes_left).min(u32::MAX as u64) as u32,
-                        ),
-                        false,
-                    )
-                }
-            }
+            Decision::Recurring { minutes_left } => (
+                render_title(
+                    &tpl_recurring,
+                    &entry.service_name,
+                    (*minutes_left).max(1),
+                    entry.next_reset_at(),
+                ),
+                false,
+            ),
             _ => continue,
         };
         let next_reset = entry.next_reset_at();
@@ -460,18 +455,18 @@ mod tests {
     }
 
     #[test]
-    fn recurring_title_uses_first_alert_when_unaligned() {
+    fn recurring_title_uses_recurring_template_when_unaligned() {
         // 首次提醒在非整分边界触发后，周期提醒的剩余时间不会恰好等于间隔，
-        // 此时（含剩余 < 间隔的最后窗口）仍沿用"将在 X 分钟后重置"文案
+        // 周期提醒统一使用周期提醒模板文案（"即将重置！还剩 Y 分钟"）
         let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
         let mut state = state_with(entry(1.0, 30, 10, false), true);
         let mock = MockNotificationService::default();
 
         // 剩余 27 分钟 → A
         run_tick(&mut state, t0 + chrono::Duration::minutes(33), &mock);
-        // 剩余 17 分钟（≠ 间隔 10，距上次提醒满 10 分钟）→ 周期提醒用 A 文案
+        // 剩余 17 分钟（距上次提醒满 10 分钟）→ 周期提醒用 B 模板文案
         run_tick(&mut state, t0 + chrono::Duration::minutes(43), &mock);
-        // 剩余 7 分钟（≠ 间隔 10）→ 仍用 A 文案
+        // 剩余 7 分钟 → 仍用 B 模板文案
         run_tick(&mut state, t0 + chrono::Duration::minutes(53), &mock);
         // 到点 → 仅 C
         run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
@@ -479,24 +474,23 @@ mod tests {
         let titles = mock.titles_snapshot();
         assert_eq!(titles.len(), 4);
         assert_eq!(titles[0], "[test] 将在 27 分钟后重置");
-        assert_eq!(titles[1], "[test] 将在 17 分钟后重置");
-        assert_eq!(titles[2], "[test] 将在 7 分钟后重置");
+        assert_eq!(titles[1], "[test] 即将重置！还剩 17 分钟");
+        assert_eq!(titles[2], "[test] 即将重置！还剩 7 分钟");
         assert_eq!(titles[3], "[test] 配额已重置");
     }
 
     #[test]
-    fn recurring_title_tiers_by_remaining() {
-        // 重置间隔 1h、阈值 30、周期提醒间隔 10；文案按剩余时间分级
+    fn recurring_title_uses_recurring_template_by_remaining() {
+        // 重置间隔 1h、阈值 30、周期提醒间隔 10；周期提醒统一用 B 模板文案
         let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
         let mut state = state_with(entry(1.0, 30, 10, false), true);
         let mock = MockNotificationService::default();
 
         // 剩余 25 分钟 → A 首次提醒"将在 25 分钟后重置"
         run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
-        // 剩余 15 分钟（> 间隔 10，距上次提醒满 10 分钟）→ 周期提醒用 A 文案
+        // 剩余 15 分钟（> 间隔 10，距上次提醒满 10 分钟）→ 周期提醒用 B 模板文案
         run_tick(&mut state, t0 + chrono::Duration::minutes(45), &mock);
-        // 剩余 10 分钟（= 间隔，距上次提醒 5 分钟，但 last_alert_at 已是 0:45…）
-        // 距上次提醒不足 10 分钟 → 无动作
+        // 剩余 10 分钟（= 间隔，距上次提醒 5 分钟）不足 10 分钟 → 无动作
         run_tick(&mut state, t0 + chrono::Duration::minutes(50), &mock);
         // 距上次提醒满 10 分钟且剩余 0（重置优先）→ 仅 C
         run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
@@ -504,7 +498,7 @@ mod tests {
         let titles = mock.titles_snapshot();
         assert_eq!(titles.len(), 3);
         assert_eq!(titles[0], "[test] 将在 25 分钟后重置");
-        assert_eq!(titles[1], "[test] 将在 15 分钟后重置");
+        assert_eq!(titles[1], "[test] 即将重置！还剩 15 分钟");
         assert_eq!(titles[2], "[test] 配额已重置");
     }
 

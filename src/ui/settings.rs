@@ -12,7 +12,7 @@ use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -35,7 +35,7 @@ pub(crate) enum SettingsTab {
 impl SettingsTab {
     fn label(self) -> &'static str {
         match self {
-            Self::Notifications => "桌面通知",
+            Self::Notifications => "通知提醒",
             Self::BackupSync => "备份与恢复",
             Self::ImportExport => "导入与导出",
             Self::About => "关于",
@@ -50,7 +50,7 @@ impl SettingsTab {
             Self::BackupSync => 460.,
             Self::About => 170.,
             Self::ImportExport => 140.,
-            Self::Notifications => 70.,
+            Self::Notifications => 500.,
         }
     }
 }
@@ -77,6 +77,10 @@ pub struct SettingsView {
     username: Entity<InputState>,
     password: Entity<InputState>,
     remote_dir: Entity<InputState>,
+    /// "桌面通知"页的三类提醒内容模板多行输入框（首次 / 周期 / 重置）。
+    reminder_first: Entity<TextareaState>,
+    reminder_recurring: Entity<TextareaState>,
+    reminder_reset: Entity<TextareaState>,
     /// 窗体呈现的设置页面（构造时确定，窗体内不可切换）。
     page: SettingsTab,
     busy: Option<Busy>,
@@ -112,6 +116,7 @@ impl SettingsView {
         page: SettingsTab,
     ) -> Self {
         let config = state.read(cx).webdav_config.clone().unwrap_or_default();
+        let saved_template = state.read(cx).reminder_template.clone();
 
         let view = Self {
             state,
@@ -135,6 +140,16 @@ impl SettingsView {
                 InputState::new(window, cx)
                     .default_value(config.remote_dir.clone())
                     .placeholder("/quota-watch")
+            }),
+            reminder_first: cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .default_value(saved_template.title_first_alert.clone())
+            }),
+            reminder_recurring: cx.new(|cx| {
+                TextareaState::new(window, cx).default_value(saved_template.title_recurring.clone())
+            }),
+            reminder_reset: cx.new(|cx| {
+                TextareaState::new(window, cx).default_value(saved_template.title_reset.clone())
             }),
             page,
             busy: None,
@@ -1031,9 +1046,39 @@ impl SettingsView {
 
     fn render_notifications(&self, enabled: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
+
+        // 提醒模板行：标签固定宽 + 多行输入框占满剩余宽度，三行共享对齐脊线
+        let template_row = |label: &'static str, input: &Entity<TextareaState>| {
+            h_flex()
+                .w_full()
+                .gap_2()
+                .items_start()
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_shrink_0()
+                        .pt_1()
+                        .text_size(px(13.))
+                        .text_color(theme.muted_foreground)
+                        .child(label),
+                )
+                .child(Textarea::new(input).h(px(64.)).flex_1().w_full())
+        };
+
+        // 分组标题：13px 加粗（用户指定，覆盖默认的 section 常规字重）
+        let group_title = |text: &'static str| {
+            div()
+                .text_size(px(13.))
+                .font_weight(FontWeight::BOLD)
+                .text_color(theme.foreground)
+                .child(text)
+        };
+
         v_flex()
             .w_full()
             .gap_2()
+            // 分组一：桌面通知
+            .child(group_title("桌面通知"))
             .child(
                 div()
                     .text_size(px(12.))
@@ -1042,7 +1087,7 @@ impl SettingsView {
             )
             .child(h_flex().w_full().justify_center().child(render_checkbox(
                 "settings-notifications",
-                "启用桌面通知",
+                "启用",
                 enabled,
                 cx.listener(move |this, checked: &bool, _window, cx| {
                     let enabled = *checked;
@@ -1066,7 +1111,122 @@ impl SettingsView {
                 Some(px(13.)),
                 cx,
             )))
+            // 分组二：通知模板
+            .child(div().w_full().h(px(1.)).bg(theme.border).my_2())
+            .child(group_title("通知模板"))
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .text_size(px(12.))
+                    .text_color(theme.muted_foreground)
+                    // 占位符说明：标签固定宽 + 每个占位符单独一行（悬挂对齐
+                    // "："后的内容），不挤成一长行
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_0()
+                            .items_start()
+                            .child(div().flex_shrink_0().child("占位符："))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .child("{service} 服务名")
+                                    .child("{minutes} 剩余分钟数")
+                                    .child("{next_reset} 重置时间"),
+                            ),
+                    )
+                    .child("默认值：清空输入则恢复默认。"),
+            )
+            .child(template_row("首次提醒", &self.reminder_first))
+            .child(template_row("周期提醒", &self.reminder_recurring))
+            .child(template_row("重置提醒", &self.reminder_reset))
+            .child(
+                h_flex().w_full().justify_center().child(
+                    pointer_button("settings-reminder-save")
+                        .primary()
+                        .label("保存")
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.save_reminder_template(window, cx);
+                        })),
+                ),
+            )
             .into_any_element()
+    }
+
+    /// 保存提醒内容模板：非空输入 trim 后写入并持久化；空输入使用对应
+    /// 默认模板保存到配置文件并回填输入框（不得保存空值）。
+    fn save_reminder_template(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let default_tpl = crate::models::ReminderTemplate::default();
+        let mut restored_default = false;
+        let pick = |raw: String, default_value: String, restored: &mut bool| {
+            let trimmed = raw.trim().to_string();
+            if trimmed.is_empty() {
+                *restored = true;
+                default_value
+            } else {
+                trimmed
+            }
+        };
+        let title_first = pick(
+            self.reminder_first.read(cx).value().to_string(),
+            default_tpl.title_first_alert.clone(),
+            &mut restored_default,
+        );
+        let title_recurring = pick(
+            self.reminder_recurring.read(cx).value().to_string(),
+            default_tpl.title_recurring.clone(),
+            &mut restored_default,
+        );
+        let title_reset = pick(
+            self.reminder_reset.read(cx).value().to_string(),
+            default_tpl.title_reset.clone(),
+            &mut restored_default,
+        );
+        let template = crate::models::ReminderTemplate {
+            title_first_alert: title_first.clone(),
+            title_recurring: title_recurring.clone(),
+            title_reset: title_reset.clone(),
+        };
+        // 回填输入框：空值场景回填默认模板，非空场景回填 trim 后内容
+        self.reminder_first.update(cx, |state, cx| {
+            state.set_value(title_first, window, cx);
+        });
+        self.reminder_recurring.update(cx, |state, cx| {
+            state.set_value(title_recurring, window, cx);
+        });
+        self.reminder_reset.update(cx, |state, cx| {
+            state.set_value(title_reset, window, cx);
+        });
+        let message: SharedString = if restored_default {
+            "提醒内容已保存（空输入已恢复默认模板）".into()
+        } else {
+            "提醒内容已保存".into()
+        };
+        let state = self.state.clone();
+        let entity = cx.entity();
+        let result = models::mutate(
+            &state,
+            cx,
+            move |app_state, _| {
+                app_state.reminder_template = template;
+                Ok(())
+            },
+            move |error, cx| {
+                // 仅失败路径：展示真实错误（成功反馈在下方统一处理）
+                let entity = entity.clone();
+                cx.defer(move |cx| {
+                    entity.update(cx, |view, cx| {
+                        view.show_toast(format!("保存失败：{error}"), cx)
+                    });
+                });
+            },
+        );
+        // mutate 返回 Some 即状态更新成功（持久化在后台异步执行）
+        if result.is_some() {
+            // 输入框失焦：保存提交后光标不应停留在输入框
+            window.blur(cx);
+            self.show_toast(message, cx);
+        }
     }
 
     fn render_backup_sync(&self, cx: &mut Context<Self>) -> AnyElement {

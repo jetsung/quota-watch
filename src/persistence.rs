@@ -182,6 +182,53 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn reminder_template_roundtrip() {
+        let state = PersistedState {
+            reminder_template: crate::models::ReminderTemplate {
+                title_first_alert: "【{service}】只剩 {minutes} 分钟".into(),
+                title_recurring: "[{service}] 倒计时 {minutes}".into(),
+                title_reset: "{service} 已重置 @ {next_reset}".into(),
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string_pretty(&state).unwrap();
+        let loaded: PersistedState = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            loaded.reminder_template.title_first_alert,
+            "【{service}】只剩 {minutes} 分钟"
+        );
+        assert_eq!(
+            loaded.reminder_template.title_recurring,
+            "[{service}] 倒计时 {minutes}"
+        );
+        assert_eq!(
+            loaded.reminder_template.title_reset,
+            "{service} 已重置 @ {next_reset}"
+        );
+    }
+
+    #[test]
+    fn old_json_without_reminder_template_defaults() {
+        // 旧格式配置（无 reminder_template 字段）反序列化得到默认模板
+        let json = r#"{
+            "services": [],
+            "global_notifications_enabled": true,
+            "webdav_config": null
+        }"#;
+        let loaded: PersistedState = serde_json::from_str(json).unwrap();
+        let dft = crate::models::ReminderTemplate::default();
+        assert_eq!(
+            loaded.reminder_template.title_first_alert,
+            dft.title_first_alert
+        );
+        assert_eq!(
+            loaded.reminder_template.title_recurring,
+            dft.title_recurring
+        );
+        assert_eq!(loaded.reminder_template.title_reset, dft.title_reset);
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_config_path_uses_appdata_flat_layout() {
