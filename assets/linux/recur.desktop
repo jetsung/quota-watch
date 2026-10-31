@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Recur
+Name[zh_CN]=周期提醒
+GenericName=Periodic Reminder
+GenericName[zh_CN]=周期倒计时提醒
+Comment=Countdown reminders for recurring resets, expirations and periodic tasks
+Comment[zh_CN]=为配额重置、订阅到期与周期性任务提供倒计时与桌面提醒
+Exec=/opt/recur/recur
+TryExec=/opt/recur/recur
+Icon=recur
+Terminal=false
+Categories=Utility;
+Keywords=periodic;countdown;timer;reset;subscription;reminder;notification;
+Keywords[zh_CN]=周期;倒计时;提醒;重置;订阅;
+StartupNotify=false

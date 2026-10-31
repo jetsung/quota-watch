@@ -3,5 +3,5 @@
 # 目录非空（残留文件）时会保留；postrm 兜底 rmdir（仅删空目录，安全幂等）。
 # $1: remove / purge / upgrade / abort-install ...
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-    rmdir /opt/quota-watch 2>/dev/null || true
+    rmdir /opt/recur 2>/dev/null || true
 fi

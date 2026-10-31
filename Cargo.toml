@@ -1,12 +1,12 @@
 [package]
-name = "quota-watch"
-version = "0.2.0-beta.1"
+name = "recur"
+version = "0.2.0-beta.2"
 edition = "2024"
-description = "一款轻量的桌面配额倒计时提醒工具"
+description = "一款轻量的桌面周期提醒工具，支持配额重置、订阅到期与周期性任务倒计时"
 license = "Apache-2.0"
-repository = "https://github.com/jetsung/quota-watch"
+repository = "https://github.com/jetsung/recur"
 readme = "README.md"
-keywords = ["quota", "desktop", "notification", "reminder", "tray"]
+keywords = ["reminder", "periodic", "desktop", "notification", "tray"]
 categories = ["gui"]
 
 [dependencies]
@@ -54,27 +54,27 @@ gpui-kit = { version = "0.7.3", features = ["test-support"] }
 
 [package.metadata.deb]
 maintainer = "Jetsung Chan <i@jetsung.com>"
-# 维护脚本目录（postrm：卸载后清理 /opt/quota-watch 空目录，cargo-deb 自动 chmod 755）
+# 维护脚本目录（postrm：卸载后清理 /opt/recur 空目录，cargo-deb 自动 chmod 755）
 maintainer-scripts = "assets/debian"
 assets = [
-    ["target/release/quota-watch", "opt/quota-watch/quota-watch", "755"],
-    ["assets/linux/quota-watch.desktop", "usr/share/applications/quota-watch.desktop", "644"],
-    ["assets/icons/quota-watch.svg", "usr/share/icons/hicolor/scalable/apps/quota-watch.svg", "644"],
-    ["assets/icons/quota-watch-256.png", "usr/share/icons/hicolor/256x256/apps/quota-watch.png", "644"],
+    ["target/release/recur", "opt/recur/recur", "755"],
+    ["assets/linux/recur.desktop", "usr/share/applications/recur.desktop", "644"],
+    ["assets/icons/recur.svg", "usr/share/icons/hicolor/scalable/apps/recur.svg", "644"],
+    ["assets/icons/recur-256.png", "usr/share/icons/hicolor/256x256/apps/recur.png", "644"],
 ]
 
 [package.metadata.generate-rpm]
 maintainer = "Jetsung Chan <i@jetsung.com>"
 assets = [
-    { source = "target/release/quota-watch", dest = "/opt/quota-watch/quota-watch", mode = "755" },
-    { source = "assets/linux/quota-watch.desktop", dest = "/usr/share/applications/quota-watch.desktop", mode = "644" },
-    { source = "assets/icons/quota-watch.svg", dest = "/usr/share/icons/hicolor/scalable/apps/quota-watch.svg", mode = "644" },
-    { source = "assets/icons/quota-watch-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/quota-watch.png", mode = "644" },
+    { source = "target/release/recur", dest = "/opt/recur/recur", mode = "755" },
+    { source = "assets/linux/recur.desktop", dest = "/usr/share/applications/recur.desktop", mode = "644" },
+    { source = "assets/icons/recur.svg", dest = "/usr/share/icons/hicolor/scalable/apps/recur.svg", mode = "644" },
+    { source = "assets/icons/recur-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/recur.png", mode = "644" },
 ]
-# rpm 只删除包属文件、不删目录，卸载后 /opt/quota-watch 会残留为空目录。
+# rpm 只删除包属文件、不删目录，卸载后 /opt/recur 会残留为空目录。
 # 完全移除时（$1=0）用 rmdir 清理（rmdir 仅删空目录，升级 $1>=1 时不动，安全）。
 post_uninstall_script = """
 if [ "$1" -eq 0 ]; then
-    rmdir /opt/quota-watch 2>/dev/null || true
+    rmdir /opt/recur 2>/dev/null || true
 fi
 """

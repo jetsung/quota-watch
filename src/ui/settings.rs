@@ -77,7 +77,7 @@ pub struct SettingsView {
     username: Entity<InputState>,
     password: Entity<InputState>,
     remote_dir: Entity<InputState>,
-    /// "桌面通知"页的三类提醒内容模板多行输入框（首次 / 周期 / 重置）。
+    /// "桌面通知"页的三类提醒内容模板多行输入框（首次 / 周期 / 触发）。
     reminder_first: Entity<TextareaState>,
     reminder_recurring: Entity<TextareaState>,
     reminder_reset: Entity<TextareaState>,
@@ -106,7 +106,7 @@ fn pointer_button(id: impl Into<gpui_kit::ElementId>) -> Button {
 }
 
 /// 远程目录留空时使用的默认目录（项目专属子目录）。
-const DEFAULT_REMOTE_DIR: &str = "/quota-watch";
+const DEFAULT_REMOTE_DIR: &str = "/recur";
 
 impl SettingsView {
     pub fn new(
@@ -139,7 +139,7 @@ impl SettingsView {
             remote_dir: cx.new(|cx| {
                 InputState::new(window, cx)
                     .default_value(config.remote_dir.clone())
-                    .placeholder("/quota-watch")
+                    .placeholder("/recur")
             }),
             reminder_first: cx.new(|cx| {
                 TextareaState::new(window, cx)
@@ -530,7 +530,7 @@ impl SettingsView {
                                 *app_state = AppState::from_persisted(next.clone());
                                 // 整体替换清空了运行时标志；备份中的 last_reset_time 可能已过期，
                                 // 立即静默追赶（与启动时一致，不发通知）。否则下一个 1s tick 会对
-                                // 每个过期服务同步连发"配额已重置"桌面通知——macOS 上每条在主
+                                // 每个过期服务同步连发"已触发"桌面通知——macOS 上每条在主
                                 // 线程阻塞最多 2 秒，恢复即刻表现为界面卡死。
                                 crate::timer_engine::run_startup_catchup(
                                     app_state,
@@ -693,7 +693,7 @@ impl SettingsView {
                         move |app_state, _| {
                             *app_state = AppState::from_persisted(next.clone());
                             // 与 WebDAV 恢复相同：替换后立即静默追赶过期条目，
-                            // 避免下一个 tick 的"配额已重置"通知风暴阻塞主线程。
+                            // 避免下一个 tick 的"已触发"通知风暴阻塞主线程。
                             crate::timer_engine::run_startup_catchup(app_state, chrono::Utc::now());
                             Ok(())
                         },
@@ -1083,7 +1083,7 @@ impl SettingsView {
                 div()
                     .text_size(px(12.))
                     .text_color(theme.muted_foreground)
-                    .child("控制所有服务的桌面通知；倒计时与重置检测不受影响。"),
+                    .child("控制所有服务的桌面通知；倒计时与周期检测不受影响。"),
             )
             .child(h_flex().w_full().justify_center().child(render_checkbox(
                 "settings-notifications",
@@ -1132,14 +1132,14 @@ impl SettingsView {
                                     .flex_1()
                                     .child("{service} 服务名")
                                     .child("{minutes} 剩余分钟数")
-                                    .child("{next_reset} 重置时间"),
+                                    .child("{next_reset} 下次触发时间"),
                             ),
                     )
                     .child("默认值：清空输入则恢复默认。"),
             )
             .child(template_row("首次提醒", &self.reminder_first))
             .child(template_row("周期提醒", &self.reminder_recurring))
-            .child(template_row("重置提醒", &self.reminder_reset))
+            .child(template_row("触发提醒", &self.reminder_reset))
             .child(
                 h_flex().w_full().justify_center().child(
                     pointer_button("settings-reminder-save")
@@ -1352,7 +1352,7 @@ impl SettingsView {
                     .text_size(px(15.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.foreground)
-                    .child("配置重置提醒"),
+                    .child("Recur · 周期提醒"),
             )
             .child(
                 div()

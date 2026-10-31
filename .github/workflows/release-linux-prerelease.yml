@@ -72,7 +72,7 @@ jobs:
           cargo install cargo-generate-rpm
       - name: Build for Linux (x86_64-gnu)
         run: |
-          cargo build -p quota-watch --release --target x86_64-unknown-linux-gnu
+          cargo build -p recur --release --target x86_64-unknown-linux-gnu
       - name: Package .deb, .rpm and tarball
         run: |
           mkdir ${{ env.RELEASE_DIR }}
@@ -83,7 +83,7 @@ jobs:
           cargo generate-rpm --target x86_64-unknown-linux-gnu
           mv target/x86_64-unknown-linux-gnu/generate-rpm/*.rpm ${{ env.RELEASE_DIR }}/
           # tarball
-          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ steps.tag.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.xz" -C target/x86_64-unknown-linux-gnu/release quota-watch
+          tar -cJf "${{ env.RELEASE_DIR }}/recur-v${{ steps.tag.outputs.VERSION }}-x86_64-unknown-linux-gnu.tar.xz" -C target/x86_64-unknown-linux-gnu/release recur
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:

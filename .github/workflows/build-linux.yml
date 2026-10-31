@@ -44,12 +44,12 @@ jobs:
       - name: Update submodules
         run: git submodule update --init --recursive
       - name: Build for Linux (x86_64)
-        run: cargo build -p quota-watch --release --target x86_64-unknown-linux-gnu
+        run: cargo build -p recur --release --target x86_64-unknown-linux-gnu
       - name: Create tarball
         run: |
           VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
           mkdir -p "${{ env.RELEASE_DIR }}"
-          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-x86_64-unknown-linux-gnu.tar.xz" -C target/x86_64-unknown-linux-gnu/release quota-watch
+          tar -cJf "${{ env.RELEASE_DIR }}/recur-v${VER}-x86_64-unknown-linux-gnu.tar.xz" -C target/x86_64-unknown-linux-gnu/release recur
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:

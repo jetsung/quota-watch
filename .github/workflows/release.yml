@@ -103,7 +103,7 @@ jobs:
         run: |
           # GUI 应用依赖系统 wayland/x11/GPU 库，只构建 gnu（glibc）二进制，
           # musl 静态链接对 GUI 无意义
-          cargo build -p quota-watch --release --target ${{ matrix.target }}
+          cargo build -p recur --release --target ${{ matrix.target }}
       - name: Package .deb, .rpm and tarball
         run: |
           mkdir -p "${{ env.RELEASE_DIR }}"
@@ -117,7 +117,7 @@ jobs:
           mv target/${{ matrix.target }}/generate-rpm/*.rpm ${{ env.RELEASE_DIR }}/
 
           # tarball (gnu)
-          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-${{ matrix.target }}.tar.xz" -C target/${{ matrix.target }}/release quota-watch
+          tar -cJf "${{ env.RELEASE_DIR }}/recur-v${{ needs.extract-version.outputs.version }}-${{ matrix.target }}.tar.xz" -C target/${{ matrix.target }}/release recur
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -129,8 +129,8 @@ jobs:
     needs: [extract-version]
     runs-on: macos-26
     env:
-      APP_NAME: QuotaWatch
-      BUNDLE_ID: cn.gcli.quota-watch
+      APP_NAME: Recur
+      BUNDLE_ID: cn.gcli.recur
     steps:
       - uses: actions/checkout@v7
         with:
@@ -158,32 +158,32 @@ jobs:
       - name: Build for MacOS
         run: |
           for arch in x86_64 aarch64; do
-            cargo build -p quota-watch --release --target $arch-apple-darwin
+            cargo build -p recur --release --target $arch-apple-darwin
           done
           # 合并为单个 Universal Binary（供 .app 打包使用）
           lipo -create \
-            target/aarch64-apple-darwin/release/quota-watch \
-            target/x86_64-apple-darwin/release/quota-watch \
-            -output quota-watch
-          lipo -info quota-watch
+            target/aarch64-apple-darwin/release/recur \
+            target/x86_64-apple-darwin/release/recur \
+            -output recur
+          lipo -info recur
 
       - name: Assemble .app bundle
         run: |
           APP_DIR="${{ env.APP_NAME }}.app"
           mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-          cp quota-watch "$APP_DIR/Contents/MacOS/quota-watch"
+          cp recur "$APP_DIR/Contents/MacOS/recur"
 
           # PNG 生成 icns 图标
-          ICONSET=quota-watch.iconset
+          ICONSET=recur.iconset
           mkdir "$ICONSET"
-          SRC=assets/icons/quota-watch-256.png
+          SRC=assets/icons/recur-256.png
           for size in 16 32 64 128 256 512; do
             sips -z $size $size "$SRC" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
             double=$((size * 2))
             sips -z $double $double "$SRC" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
           done
-          iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/quota-watch.icns"
+          iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/recur.icns"
 
           cat > "$APP_DIR/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
@@ -195,8 +195,8 @@ jobs:
             <key>CFBundleIdentifier</key>        <string>${{ env.BUNDLE_ID }}</string>
             <key>CFBundleVersion</key>           <string>${{ needs.extract-version.outputs.version }}</string>
             <key>CFBundleShortVersionString</key><string>${{ needs.extract-version.outputs.version }}</string>
-            <key>CFBundleExecutable</key>        <string>quota-watch</string>
-            <key>CFBundleIconFile</key>          <string>quota-watch</string>
+            <key>CFBundleExecutable</key>        <string>recur</string>
+            <key>CFBundleIconFile</key>          <string>recur</string>
             <key>CFBundlePackageType</key>       <string>APPL</string>
             <key>LSMinimumSystemVersion</key>    <string>10.15</string>
             <key>NSHighResolutionCapable</key>   <true/>
@@ -218,16 +218,16 @@ jobs:
           VER="${{ needs.extract-version.outputs.version }}"
           for arch in x86_64 aarch64; do
             # 打包前 ad-hoc 签名：x86_64 链接器默认不签名，统一两架构签名状态
-            codesign --force --sign - target/$arch-apple-darwin/release/quota-watch
-            tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release quota-watch
+            codesign --force --sign - target/$arch-apple-darwin/release/recur
+            tar -cJf "${{ env.RELEASE_DIR }}/recur-v${VER}-$arch-apple-darwin.tar.xz" -C target/$arch-apple-darwin/release recur
           done
           # .app（Universal）已 ad-hoc 签名（未公证）；文件名不含 signed。
           # 不含 apple-darwin 与单 arch 关键词，不会被应用内自更新选中（见 src/update.rs）
-          tar -cJf "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal.app.tar.xz" "${{ env.APP_NAME }}.app"
+          tar -cJf "${{ env.RELEASE_DIR }}/recur-v${VER}-universal.app.tar.xz" "${{ env.APP_NAME }}.app"
           # 固定名副本：README 的 releases/latest/download 直达链接需要恒定资产名。
           # 同样不含 darwin/arch 关键词，不会被应用内自更新误选
-          cp "${{ env.RELEASE_DIR }}/quota-watch-v${VER}-universal.app.tar.xz" \
-            "${{ env.RELEASE_DIR }}/QuotaWatch-macOS-universal.app.tar.xz"
+          cp "${{ env.RELEASE_DIR }}/recur-v${VER}-universal.app.tar.xz" \
+            "${{ env.RELEASE_DIR }}/Recur-macOS-universal.app.tar.xz"
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -270,14 +270,14 @@ jobs:
         shell: bash
         run: |
           for arch in x86_64 aarch64; do
-            cargo build -p quota-watch --release --target $arch-pc-windows-msvc
+            cargo build -p recur --release --target $arch-pc-windows-msvc
           done
       - name: Create release zip files
         shell: bash
         run: |
           mkdir "${{ env.RELEASE_DIR }}"
           for arch in x86_64 aarch64; do
-            zip -j "${{ env.RELEASE_DIR }}/quota-watch-v${{ needs.extract-version.outputs.version }}-$arch-pc-windows-msvc.zip" target/$arch-pc-windows-msvc/release/quota-watch.exe
+            zip -j "${{ env.RELEASE_DIR }}/recur-v${{ needs.extract-version.outputs.version }}-$arch-pc-windows-msvc.zip" target/$arch-pc-windows-msvc/release/recur.exe
           done
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
@@ -328,11 +328,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rm -f quota-watch-v*-x86_64-apple-darwin.tar.xz \
-                quota-watch-v*-aarch64-apple-darwin.tar.xz \
-                quota-watch-v*-universal.app.tar.xz
+          rm -f recur-v*-x86_64-apple-darwin.tar.xz \
+                recur-v*-aarch64-apple-darwin.tar.xz \
+                recur-v*-universal.app.tar.xz
           gh release delete latest-macos --cleanup-tag --yes || true
           gh release create latest-macos --prerelease \
-            --title "QuotaWatch macOS（滚动最新）" \
+            --title "Recur macOS（滚动最新）" \
             --notes "固定下载链接，随每次发布自动更新到最新版本（含 beta）。仅承载 macOS 安装资产，不影响应用内自更新。" \
-            "QuotaWatch-macOS-universal.app.tar.xz"
+            "Recur-macOS-universal.app.tar.xz"

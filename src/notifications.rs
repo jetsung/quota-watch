@@ -39,9 +39,10 @@ fn notification_icon_path() -> Option<std::path::PathBuf> {
     static ICON: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
     ICON.get_or_init(|| {
         let dir = crate::persistence::config_path().parent()?.to_path_buf();
+        std::fs::create_dir_all(&dir).ok()?;
         let path = dir.join("notification-icon.png");
         if !path.exists() {
-            std::fs::write(&path, include_bytes!("../assets/icons/quota-watch-128.png")).ok()?;
+            std::fs::write(&path, include_bytes!("../assets/icons/recur-128.png")).ok()?;
         }
         Some(path)
     })
@@ -158,7 +159,7 @@ pub fn title_reset(service_name: &str, next_reset: chrono::DateTime<Utc>) -> Str
 
 pub fn body_with_next_reset(next_reset_at: chrono::DateTime<Utc>) -> String {
     format!(
-        "下次重置：{}",
+        "下次触发时间：{}",
         next_reset_at
             .with_timezone(&Local)
             .format("%Y-%m-%d %H:%M:%S")
@@ -193,13 +194,13 @@ mod tests {
         let next = Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap();
         assert_eq!(
             title_first_alert("openai", 30, next),
-            "[openai] 将在 30 分钟后重置"
+            "[openai] 将在 30 分钟后触发"
         );
         assert_eq!(
             title_recurring("openai", 2, next),
-            "[openai] 即将重置！还剩 2 分钟"
+            "[openai] 即将触发！还剩 2 分钟"
         );
-        assert_eq!(title_reset("gpt", next), "[gpt] 配额已重置");
+        assert_eq!(title_reset("gpt", next), "[gpt] 已触发");
     }
 
     #[test]
@@ -207,13 +208,13 @@ mod tests {
         let next = Utc.with_ymd_and_hms(2026, 10, 16, 12, 0, 0).unwrap();
         assert_eq!(
             render_title(
-                "【{service}】只剩 {minutes} 分钟，{next_reset} 重置",
+                "【{service}】只剩 {minutes} 分钟，{next_reset} 触发",
                 "openai",
                 27,
                 next
             ),
             format!(
-                "【openai】只剩 27 分钟，{} 重置",
+                "【openai】只剩 27 分钟，{} 触发",
                 next.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S")
             )
         );
@@ -238,7 +239,7 @@ mod tests {
     fn body_local_time() {
         let t = Utc.with_ymd_and_hms(2026, 10, 16, 5, 0, 0).unwrap();
         let body = body_with_next_reset(t);
-        assert!(body.contains("下次重置："));
+        assert!(body.contains("下次触发时间："));
         assert!(body.contains("2026-10-16"));
     }
 }

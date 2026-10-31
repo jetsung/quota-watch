@@ -6,7 +6,7 @@ use gpui_kit::{App, Entity, Task};
 /// tick 决策结果（按 Condition C > A > B 优先级，每 tick 每服务至多一条）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
-    /// Condition C：已过期，需要重置滚动（含跨多周期对齐）。
+    /// Condition C：已过期，需要触发滚动（含跨多周期对齐）。
     Reset {
         /// 推进后的新 last_reset_time（周期起点，非 now，避免漂移）。
         new_last_reset: DateTime<Utc>,
@@ -29,7 +29,7 @@ pub fn decide(
 ) -> Decision {
     let next_reset = service.next_reset_at();
 
-    // Condition C：重置滚动（含多周期追赶），优先级最高；不受静音与全局开关影响。
+    // Condition C：触发滚动（含多周期追赶），优先级最高；不受静音与全局开关影响。
     // 追赶计算与启动追赶共用 `catchup_last_reset`，避免两处算法漂移。
     if let Some(new_last_reset) = service.catchup_last_reset(now) {
         return Decision::Reset { new_last_reset };
@@ -71,7 +71,7 @@ pub fn decide(
     Decision::Noop
 }
 
-/// 单次 tick 的结果：是否发生重置（触发持久化）与失败消息列表（触发 Toast）。
+/// 单次 tick 的结果：是否发生触发（触发持久化）与失败消息列表（触发 Toast）。
 #[derive(Debug, Default)]
 pub struct TickOutcome {
     pub reset_happened: bool,
@@ -79,7 +79,7 @@ pub struct TickOutcome {
 }
 
 /// 执行单次 tick 的完整逻辑（纯函数，`now` 可注入便于测试）。
-/// 优先级 C -> A -> B：先批量处理 Condition C 重置（含多周期追赶，清除标志位），
+/// 优先级 C -> A -> B：先批量处理 Condition C 触发（含多周期追赶，清除标志位），
 /// 再发送 A/B 通知；通知失败写入日志并返回失败消息，不中断 tick。
 pub fn run_tick(
     state: &mut AppState,
@@ -104,7 +104,7 @@ pub fn run_tick(
         })
         .collect();
 
-    // 阶段二：统一应用 Condition C 重置（可变借用），含多周期追赶
+    // 阶段二：统一应用 Condition C 触发（可变借用），含多周期追赶
     for (entry, decision) in &decisions {
         if let Decision::Reset { new_last_reset } = decision {
             if let Some(e) = state.services.iter_mut().find(|e| e.id == entry.id) {
@@ -118,9 +118,9 @@ pub fn run_tick(
                 },
             );
             out.reset_happened = true;
-            // 重置通知：告知用户配额已重置并进入新周期。
-            // 重置滚动行为本身不受全局开关影响（否则倒计时会失真），
-            // 但"发送桌面通知"受全局开关控制；静音仅抑制周期提醒 B，不影响重置通知。
+            // 触发通知：告知用户已触发并进入新周期。
+            // 触发滚动行为本身不受全局开关影响（否则倒计时会失真），
+            // 但"发送桌面通知"受全局开关控制；静音仅抑制周期提醒 B，不影响触发通知。
             if global {
                 let interval_secs = (entry.interval_hours * 3600.0).round() as i64;
                 let next_reset_after = *new_last_reset + chrono::Duration::seconds(interval_secs);
@@ -128,7 +128,7 @@ pub fn run_tick(
                 let body = body_with_next_reset(next_reset_after);
                 if notifier.notify(&title, &body).is_err() {
                     out.error_messages
-                        .push(format!("重置通知发送失败：{}", entry.service_name));
+                        .push(format!("触发通知发送失败：{}", entry.service_name));
                 }
             }
         }
@@ -178,7 +178,7 @@ pub fn run_tick(
 
 /// 启动追赶：在首个 tick 之前对加载后已过期（`now >= next_reset_at()`）的条目
 /// 执行多周期追赶，将 `last_reset_time` 推进到最近的未过期周期起点并重置运行时标志位，
-/// 但**不发送重置通知**（避免启动时逐条弹出"配额已重置"误报）。
+/// 但**不发送触发通知**（避免启动时逐条弹出"已触发"误报）。
 /// 返回 `true` 表示至少有一个条目被追赶（需触发持久化）。
 pub fn run_startup_catchup(state: &mut AppState, now: DateTime<Utc>) -> bool {
     let mut caught_up = false;
@@ -194,7 +194,7 @@ pub fn run_startup_catchup(state: &mut AppState, now: DateTime<Utc>) -> bool {
 
 /// 1s tick 引擎（Decision 3）：GPUI Executor 上 spawn 单任务循环。
 /// 每 tick：now=Utc::now()，调用 `run_tick`（C -> A -> B）；
-/// 通过 model.update 刷新 UI，重置后异步保存；通知失败写入日志并 Toast，不中断 tick。
+/// 通过 model.update 刷新 UI，触发后异步保存；通知失败写入日志并 Toast，不中断 tick。
 /// 任务生命周期：窗口关闭 / Entity 释放时 `async_cx.update` 失败，任务随之结束，无僵尸任务。
 pub fn spawn_timer(
     cx: &mut App,
@@ -216,8 +216,8 @@ pub fn spawn_timer(
             async_cx.update(|cx| {
                 app_state.update(cx, |state, s_cx| {
                     let now = Utc::now();
-                    // 首 tick 先追赶：过期条目滚动到当前周期起点、重置标志位，但不发重置通知
-                    // （避免启动时逐条"配额已重置"误报）；之后进入正常 tick，运行期到期照常通知。
+                    // 首 tick 先追赶：过期条目滚动到当前周期起点、重置标志位，但不发触发通知
+                    // （避免启动时逐条"已触发"误报）；之后进入正常 tick，运行期到期照常通知。
                     let mut caught_up = false;
                     if first {
                         first = false;
@@ -338,7 +338,7 @@ mod tests {
         let e = entry(5.0, 60, 5, false);
         let flags = RuntimeFlags::default();
         assert_eq!(decide(&e, t(4, 30, 0), &flags, false), Decision::Noop);
-        // 重置不受全局开关影响
+        // 触发不受全局开关影响
         assert!(matches!(
             decide(&e, t(5, 0, 0), &flags, false),
             Decision::Reset { .. }
@@ -386,7 +386,7 @@ mod tests {
             decide(&e, t(4, 5, 0), &flags2, true),
             Decision::Recurring { .. }
         ));
-        // tick4: 重置 → flags 清除
+        // tick4: 触发 → flags 清除
         match decide(&e, t(5, 0, 0), &flags2, true) {
             Decision::Reset { new_last_reset } => {
                 let cleared = RuntimeFlags::default();
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn recurring_title_uses_recurring_template_when_unaligned() {
         // 首次提醒在非整分边界触发后，周期提醒的剩余时间不会恰好等于间隔，
-        // 周期提醒统一使用周期提醒模板文案（"即将重置！还剩 Y 分钟"）
+        // 周期提醒统一使用周期提醒模板文案（"即将触发！还剩 Y 分钟"）
         let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
         let mut state = state_with(entry(1.0, 30, 10, false), true);
         let mock = MockNotificationService::default();
@@ -473,33 +473,33 @@ mod tests {
 
         let titles = mock.titles_snapshot();
         assert_eq!(titles.len(), 4);
-        assert_eq!(titles[0], "[test] 将在 27 分钟后重置");
-        assert_eq!(titles[1], "[test] 即将重置！还剩 17 分钟");
-        assert_eq!(titles[2], "[test] 即将重置！还剩 7 分钟");
-        assert_eq!(titles[3], "[test] 配额已重置");
+        assert_eq!(titles[0], "[test] 将在 27 分钟后触发");
+        assert_eq!(titles[1], "[test] 即将触发！还剩 17 分钟");
+        assert_eq!(titles[2], "[test] 即将触发！还剩 7 分钟");
+        assert_eq!(titles[3], "[test] 已触发");
     }
 
     #[test]
     fn recurring_title_uses_recurring_template_by_remaining() {
-        // 重置间隔 1h、阈值 30、周期提醒间隔 10；周期提醒统一用 B 模板文案
+        // 间隔 1h、阈值 30、周期提醒间隔 10；周期提醒统一用 B 模板文案
         let t0 = Utc.with_ymd_and_hms(2026, 10, 16, 0, 0, 0).unwrap();
         let mut state = state_with(entry(1.0, 30, 10, false), true);
         let mock = MockNotificationService::default();
 
-        // 剩余 25 分钟 → A 首次提醒"将在 25 分钟后重置"
+        // 剩余 25 分钟 → A 首次提醒"将在 25 分钟后触发"
         run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
         // 剩余 15 分钟（> 间隔 10，距上次提醒满 10 分钟）→ 周期提醒用 B 模板文案
         run_tick(&mut state, t0 + chrono::Duration::minutes(45), &mock);
         // 剩余 10 分钟（= 间隔，距上次提醒 5 分钟）不足 10 分钟 → 无动作
         run_tick(&mut state, t0 + chrono::Duration::minutes(50), &mock);
-        // 距上次提醒满 10 分钟且剩余 0（重置优先）→ 仅 C
+        // 距上次提醒满 10 分钟且剩余 0（触发优先）→ 仅 C
         run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
 
         let titles = mock.titles_snapshot();
         assert_eq!(titles.len(), 3);
-        assert_eq!(titles[0], "[test] 将在 25 分钟后重置");
-        assert_eq!(titles[1], "[test] 即将重置！还剩 15 分钟");
-        assert_eq!(titles[2], "[test] 配额已重置");
+        assert_eq!(titles[0], "[test] 将在 25 分钟后触发");
+        assert_eq!(titles[1], "[test] 即将触发！还剩 15 分钟");
+        assert_eq!(titles[2], "[test] 已触发");
     }
 
     #[test]
@@ -511,15 +511,15 @@ mod tests {
 
         // 剩余 25 分钟 → A
         run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
-        // 剩余 10 分钟（= 间隔，距上次提醒 15 分钟 ≥ 10）→ 周期提醒，切换"即将重置"
+        // 剩余 10 分钟（= 间隔，距上次提醒 15 分钟 ≥ 10）→ 周期提醒，切换"即将触发"
         run_tick(&mut state, t0 + chrono::Duration::minutes(50), &mock);
         // 剩余 5 分钟，距上次提醒 5 分钟 → 无动作
         run_tick(&mut state, t0 + chrono::Duration::minutes(55), &mock);
 
         let titles = mock.titles_snapshot();
         assert_eq!(titles.len(), 2);
-        assert_eq!(titles[0], "[test] 将在 25 分钟后重置");
-        assert_eq!(titles[1], "[test] 即将重置！还剩 10 分钟");
+        assert_eq!(titles[0], "[test] 将在 25 分钟后触发");
+        assert_eq!(titles[1], "[test] 即将触发！还剩 10 分钟");
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // 8.1 集成测试：启动加载 → tick → 通知 → 重置滚动（内存态端到端，
+    // 8.1 集成测试：启动加载 → tick → 通知 → 触发滚动（内存态端到端，
     // 注入 MockNotificationService 与固定 now，无需真实 sleep）
     // ------------------------------------------------------------------
 
@@ -588,10 +588,10 @@ mod tests {
         run_tick(&mut state, t0 + chrono::Duration::minutes(36), &mock);
         assert_eq!(mock.call_count(), 2);
 
-        // 跨过重置点 → C：last_reset 推进到 t0+1h，标志位清除，并发送"已重置"通知
+        // 跨过触发点 → C：last_reset 推进到 t0+1h，标志位清除，并发送"已触发"通知
         let out = run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
         assert!(out.reset_happened);
-        assert_eq!(mock.call_count(), 3); // A + B + 重置通知
+        assert_eq!(mock.call_count(), 3); // A + B + 触发通知
         assert_eq!(
             state.services[0].last_reset_time,
             t0 + chrono::Duration::hours(1)
@@ -617,10 +617,10 @@ mod tests {
         // B 被静音抑制
         run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
         assert_eq!(mock.call_count(), 1);
-        // C 不受静音影响，重置通知照发（静音只抑制周期提醒 B）
+        // C 不受静音影响，触发通知照发（静音只抑制周期提醒 B）
         let out = run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
         assert!(out.reset_happened);
-        assert_eq!(mock.call_count(), 2); // A + 重置通知
+        assert_eq!(mock.call_count(), 2); // A + 触发通知
     }
 
     #[test]
@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(mock.call_count(), 0);
         run_tick(&mut state, t0 + chrono::Duration::minutes(35), &mock);
         assert_eq!(mock.call_count(), 0);
-        // C 仍执行（滚动行为不受全局开关影响），但重置通知被全局禁用
+        // C 仍执行（滚动行为不受全局开关影响），但触发通知被全局禁用
         let out = run_tick(&mut state, t0 + chrono::Duration::minutes(60), &mock);
         assert!(out.reset_happened);
         assert_eq!(mock.call_count(), 0); // 全局禁用：不发送任何通知

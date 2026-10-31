@@ -1,8 +1,8 @@
-# quota-watch 功能规范
+# recur 功能规范
 
 ## 1. 总体架构
 
-桌面配额倒计时提醒工具，基于 GPUI Kit（Rust，edition 2024）。
+桌面周期提醒工具，基于 GPUI Kit（Rust，edition 2024）。
 
 ```
 src/
@@ -28,7 +28,7 @@ src/
 
 ## 2. 命令行接口
 
-- `version`：打印 `quota-watch <版本号>` 后退出，不启动 GUI（供包管理器核对）。Windows Release（GUI 子系统）无控制台时自动附加父进程控制台（`win32::attach_parent_console`）。
+- `version`：打印 `recur <版本号>` 后退出，不启动 GUI（供包管理器核对）。Windows Release（GUI 子系统）无控制台时自动附加父进程控制台（`win32::attach_parent_console`）。
 - `self-update`：检查 GitHub Releases 最新版本；已是最新时打印"已是最新版本 v<版本号>"并退出，不做下载；发现新版本时下载当前平台资产、解压并原子替换当前可执行文件，打印"升级成功，重启应用后生效"后退出；请求失败或找不到当前平台资产时打印失败原因并**以非零退出码退出**，不修改任何文件。进度以 `\r` 原地刷新（下载百分比 → 解压 → 替换）。
 - `help`：打印用法说明后退出。
 - 不带子命令（或未知参数）：正常启动 GUI。旧的 `--version` / `-V` 标志已移除（BREAKING），不再打印版本号，按未知参数处理并启动 GUI。
@@ -43,7 +43,7 @@ src/
 | `service_name` | `String` | trim 后非空 |
 | `interval_hours` | `f64` | > 0 且有限；支持浮点（5.5 = 5h30m） |
 | `last_reset_time` | `DateTime<Utc>` | 内部一律 UTC 存储 |
-| `reminder_threshold_minutes` | `u32` | ×60 秒不得超过重置间隔 |
+| `reminder_threshold_minutes` | `u32` | ×60 秒不得超过间隔 |
 | `secondary_reminder_interval_minutes` | `u32` | > 0 |
 | `is_muted` | `bool` | 仅抑制周期提醒 |
 | `reset_config_mode` | `ResetConfigMode` | `LastReset`（默认，仅兼容旧配置）/ `NextReset` / `Countdown`（serde snake_case） |
@@ -58,11 +58,11 @@ src/
 
 ### 3.2 间隔表达式解析 `parse_interval_expr`
 
-间隔输入支持**四则运算表达式**：十进制数（含小数点）、`+ - * /`、括号、空白，如 `"5"`、`"5.5"`、`"5.00 * 7"`（= 35）。非法表达式或结果非有限值（除零）返回 None → 表单报错"重置间隔必须是数字或公式"。
+间隔输入支持**四则运算表达式**：十进制数（含小数点）、`+ - * /`、括号、空白，如 `"5"`、`"5.5"`、`"5.00 * 7"`（= 35）。非法表达式或结果非有限值（除零）返回 None → 表单报错"间隔必须是数字或公式"。
 
 ### 3.3 校验规则（`ServiceEntry::validate`）
 
-依次拒绝：间隔 ≤ 0 或非有限值；阈值分钟 ×60 > 间隔秒数（"提醒阈值不能超过重置间隔"）；周期提醒间隔 == 0；服务名空白；URL 非 http/https 前缀。
+依次拒绝：间隔 ≤ 0 或非有限值；阈值分钟 ×60 > 间隔秒数（"提醒阈值不能超过间隔"）；周期提醒间隔 == 0；服务名空白；URL 非 http/https 前缀。
 
 ### 3.4 AppState（GPUI Entity）
 
@@ -82,11 +82,11 @@ src/
 
 ### 3.6 WebdavConfig（云端备份配置）
 
-字段：`server_url`（必填，http/https）、`username`、`password`、`remote_dir`（置空默认 `/quota-watch`）。随 `PersistedState.webdav_config: Option<WebdavConfig>` 持久化（见 §4），凭据仅存本地配置文件；设置表单中密码输入框为**掩码模式**（`masked(true)`），不明文展示。
+字段：`server_url`（必填，http/https）、`username`、`password`、`remote_dir`（置空默认 `/recur`）。随 `PersistedState.webdav_config: Option<WebdavConfig>` 持久化（见 §4），凭据仅存本地配置文件；设置表单中密码输入框为**掩码模式**（`masked(true)`），不明文展示。
 
 ## 4. 持久化（persistence.rs）
 
-- **路径**（按平台解析）：Linux `$HOME/.config/quota-watch/config.json`；macOS 经 `directories::ProjectDirs::from("cn", "gcli", "quota-watch")` 的 config 目录，即 `~/Library/Application Support/cn.gcli.quota-watch/config.json`；Windows 直接由 `%APPDATA%` 构造为 `%APPDATA%\quota-watch\config.json`（**不经** `ProjectDirs::config_dir()`，避免 `%APPDATA%\gcli\quota-watch\config\` 多层路径；`APPDATA` 缺失时回退 `$HOME/.config/quota-watch/config.json`，不 panic）。标准路径无法解析时统一回退 `$HOME/.config/quota-watch/config.json`。导出与 WebDAV 上传文件仍使用 `quota-watch` 系命名（`quota-watch_<时间戳>.json`），仅本地文件名为 `config.json`。不做旧路径/旧文件名迁移：Windows 旧路径 `%APPDATA%\gcli\quota-watch\config\config.json` 及其他平台的 `quota-notifier` 目录、`services.json`、`quota-watch.json` 均被忽略，不读取、不删除、不改写。
+- **路径**（按平台解析）：Linux `$HOME/.config/recur/config.json`；macOS 经 `directories::ProjectDirs::from("cn", "gcli", "recur")` 的 config 目录，即 `~/Library/Application Support/cn.gcli.recur/config.json`；Windows 直接由 `%APPDATA%` 构造为 `%APPDATA%\recur\config.json`（**不经** `ProjectDirs::config_dir()`，避免 `%APPDATA%\gcli\recur\config\` 多层路径；`APPDATA` 缺失时回退 `$HOME/.config/recur/config.json`，不 panic）。标准路径无法解析时统一回退 `$HOME/.config/recur/config.json`。导出与 WebDAV 上传文件使用 `recur` 系命名（`recur_<时间戳>.json`），仅本地文件名为 `config.json`。新路径不存在且旧版路径（Linux `$HOME/.config/quota-watch/config.json`、macOS `~/Library/Application Support/cn.gcli.quota-watch/config.json`、Windows `%APPDATA%\quota-watch\config.json`）存在时，读取旧配置并写入新路径完成一次性迁移，旧文件保持原样不删除；更早的 `%APPDATA%\gcli\...`、`quota-notifier` 目录、`services.json`、`quota-watch.json` 仍不迁移。
 - **加载 `load()`**：
   - 文件不存在 → 默认空状态，无告警。
   - 解析成功 → 返回状态。
@@ -94,7 +94,7 @@ src/
   - 读取失败 → 空状态 + 告警消息。
   - 告警消息在 GUI 启动后以 Toast 展示。
 - **保存 `save()`**：`to_string_pretty` → 写 `<path>.tmp`（`sync_all`）→ 原子 `rename`（Windows 上先删除旧文件）。失败时保留 `.tmp` 供排查，错误由 Toast 展示。
-- **持久化时机**：每次通过 `mutate` 的成功变更；tick 中发生重置滚动时异步保存。
+- **持久化时机**：每次通过 `mutate` 的成功变更；tick 中发生触发滚动时异步保存。
 - **序列化内容**：`PersistedState { services, global_notifications_enabled, webdav_config, reminder_template }`；`webdav_config`（服务器地址/用户名/密码/远程目录）为 `Option`，旧配置无此字段时反序列化为 None；`reminder_template`（三字段提醒标题模板，见 §6）带 `#[serde(default)]`，旧配置无此字段时反序列化为默认模板；废弃字段（如 `timezone`）自动忽略。
 
 ## 5. Tick 引擎与通知决策（timer_engine.rs）
@@ -109,14 +109,14 @@ src/
 
 优先级 **Condition C > A > B**：
 
-1. **Condition C（重置滚动）**：`now >= next_reset_at` → 计算跨越的完整周期数 `periods = elapsed / interval_secs`（至少 1），`new_last_reset = last_reset_time + periods × interval` —— **按周期起点对齐而非 now，避免漂移，支持错过多个周期的追赶**。不受静音与全局开关影响。
+1. **Condition C（触发滚动）**：`now >= next_reset_at` → 计算跨越的完整周期数 `periods = elapsed / interval_secs`（至少 1），`new_last_reset = last_reset_time + periods × interval` —— **按周期起点对齐而非 now，避免漂移，支持错过多个周期的追赶**。不受静音与全局开关影响。
 2. **Condition A（首次提醒）**：剩余时间（秒）≤ 阈值（秒）且本周期未提醒过 → 发送。**不受静音影响**。全局开关关闭时**不发送但视为已消费首次提醒**（避免开启后瞬时爆发）。
 3. **Condition B（周期提醒）**：已发首次提醒、非静音、全局开关开启、且 `now - last_alert_at >= secondary_reminder_interval_minutes` → 发送并更新 `last_alert_at`。
 
 ### 5.3 `run_tick` 三阶段
 
 1. 收集决策（不可变借用）。
-2. 统一应用 Condition C：推进 `last_reset_time`、清除标志位；全局开关开启时发送重置通知（静音**不**抑制重置通知）。
+2. 统一应用 Condition C：推进 `last_reset_time`、清除标志位；全局开关开启时发送触发通知（静音**不**抑制触发通知）。
 3. 发送 A/B 通知：成功才更新标志位（失败不标记，下 tick 重试）。
 
 ### 5.4 失败处理
@@ -130,24 +130,24 @@ src/
 ## 6. 桌面通知（notifications.rs）
 
 - 抽象：`NotificationService` trait（`notify(title, body)`），生产实现 `DesktopNotificationService`（notify-rust，超时 8000ms），测试用 `MockNotificationService`（计数器）。
-- **应用图标**：启动后惰性将内嵌 `assets/icons/quota-watch-128.png` 写入配置目录 `notification-icon.png`，通知经 notify-rust `icon()` 传绝对路径（Linux DBus `app_icon` 字段，xfce4-notifyd 等守护进程显示该图标）。macOS 图标来自 .app bundle（`icon()` 无效但无害），Windows 由系统通知实现决定；写入失败时静默省略图标，不影响通知发送。
+- **应用图标**：启动后惰性将内嵌 `assets/icons/recur-128.png` 写入配置目录 `notification-icon.png`，通知经 notify-rust `icon()` 传绝对路径（Linux DBus `app_icon` 字段，xfce4-notifyd 等守护进程显示该图标）。macOS 图标来自 .app bundle（`icon()` 无效但无害），Windows 由系统通知实现决定；写入失败时静默省略图标，不影响通知发送。
 - **触发流程**（`timer_engine.rs`，每次 tick 间隔 1 秒，按 **C → A → B** 优先级处理）：
-  - **C 重置**：`now >= next_reset_at` 时将 `last_reset_time` 滚动到当前周期起点（错过多个周期按间隔倍数对齐，避免漂移），重算 `next_reset_at`，清除 A/B 标志位，发送重置通知。重置滚动不受全局通知开关影响（否则倒计时失真），仅"发不发通知"受开关控制。应用启动时对已过期服务的追赶滚动**不发**通知。
+  - **C 触发**：`now >= next_reset_at` 时将 `last_reset_time` 滚动到当前周期起点（错过多个周期按间隔倍数对齐，避免漂移），重算 `next_reset_at`，清除 A/B 标志位，发送触发通知。触发滚动不受全局通知开关影响（否则倒计时失真），仅"发不发通知"受开关控制。应用启动时对已过期服务的追赶滚动**不发**通知。
   - **A 首次提醒**：剩余时间 ≤ 首次提醒阈值（`reminder_threshold_minutes`）且本周期未发过 → 发送并标记；每周期最多一次。
-  - **B 周期提醒**：需同时满足——已进入提醒区间、已发过首次提醒、服务未静音（静音仅抑制 B）、距上一条提醒已满周期提醒间隔（`secondary_reminder_interval_minutes`）→ 发送并更新时间，此后每满一个间隔再发，直到重置或静音。
-- **标题模板**（正文统一附 `下次重置：<本地时区 YYYY-MM-DD HH:MM:SS>`；`{minutes}` 为剩余分钟数）：
+  - **B 周期提醒**：需同时满足——已进入提醒区间、已发过首次提醒、服务未静音（静音仅抑制 B）、距上一条提醒已满周期提醒间隔（`secondary_reminder_interval_minutes`）→ 发送并更新时间，此后每满一个间隔再发，直到触发或静音。
+- **标题模板**（正文统一附 `下次触发时间：<本地时区 YYYY-MM-DD HH:MM:SS>`；`{minutes}` 为剩余分钟数）：
 
 | 提醒类型 | 默认标题模板 |
 | --- | --- |
-| A 首次提醒 | `[<服务名>] 将在 X 分钟后重置` |
-| B 周期提醒 | `[<服务名>] 即将重置！还剩 Y 分钟`（Y 最小取 1） |
-| C 重置 | `[<服务名>] 配额已重置` |
+| A 首次提醒 | `[<服务名>] 将在 X 分钟后触发` |
+| B 周期提醒 | `[<服务名>] 即将触发！还剩 Y 分钟`（Y 最小取 1） |
+| C 触发 | `[<服务名>] 已触发` |
 
-- **提醒内容自定义**：A/B/C 三类提醒标题分别支持独立模板渲染，编辑入口位于"通知提醒"窗体（不新增菜单项）。全局配置 `reminder_template` 含三个字段：`title_first_alert`（默认 `[<服务名>] 将在 X 分钟后重置`，Condition A）、`title_recurring`（默认 `[<服务名>] 即将重置！还剩 Y 分钟`，Condition B）与 `title_reset`（默认 `[<服务名>] 配额已重置`，Condition C）。占位符：`{service}` 服务名、`{minutes}` 剩余分钟数、`{next_reset}` 本地时区下次重置时间（`YYYY-MM-DD HH:MM:SS`），未知占位符原样保留。用户保存后各类提醒分别按对应模板渲染（周期提醒不再按剩余时间与周期间隔的相等关系切换形态，统一由周期提醒模板决定）。空值保存：该字段恢复默认模板写入配置文件并回填对应输入框。
+- **提醒内容自定义**：A/B/C 三类提醒标题分别支持独立模板渲染，编辑入口位于"通知提醒"窗体（不新增菜单项）。全局配置 `reminder_template` 含三个字段：`title_first_alert`（默认 `[<服务名>] 将在 X 分钟后触发`，Condition A）、`title_recurring`（默认 `[<服务名>] 即将触发！还剩 Y 分钟`，Condition B）与 `title_reset`（默认 `[<服务名>] 已触发`，Condition C）。占位符：`{service}` 服务名、`{minutes}` 剩余分钟数、`{next_reset}` 本地时区下次触发时间（`YYYY-MM-DD HH:MM:SS`），未知占位符原样保留。用户保存后各类提醒分别按对应模板渲染（周期提醒不再按剩余时间与周期间隔的相等关系切换形态，统一由周期提醒模板决定）。空值保存：该字段恢复默认模板写入配置文件并回填对应输入框。
 
 ## 7. UI 功能
 
-- **全局字重规范（"最少粗体"策略）**：除保留项外，所有 UI 文本（按钮文字、设置菜单项文字、状态徽章、对话框子标题、表单字段标签与模式切换标签、section 标题、错误文本、空状态占位文案、Toast 文字、复选框勾号与标签）均使用常规字重。保留 `BOLD` 的元素仅限：主窗体服务卡片的服务名（含置顶前缀）与倒计时数字；添加/编辑服务对话框自绘标题栏的标题（"添加服务"/"编辑服务：xxx"）；设置各单页窗体标题栏的窗体标题（"通知提醒"/"备份与恢复"/"导入与导出"/"关于"）；设置"关于"窗体的软件标题"配置重置提醒"；服务卡片"下次重置："行的标签部分（时间值为常规字重）。字号、颜色、间距、布局等其他视觉属性不受此策略约束。
+- **全局字重规范（"最少粗体"策略）**：除保留项外，所有 UI 文本（按钮文字、设置菜单项文字、状态徽章、对话框子标题、表单字段标签与模式切换标签、section 标题、错误文本、空状态占位文案、Toast 文字、复选框勾号与标签）均使用常规字重。保留 `BOLD` 的元素仅限：主窗体服务卡片的服务名（含置顶前缀）与倒计时数字；添加/编辑服务对话框自绘标题栏的标题（"添加服务"/"编辑服务：xxx"）；设置各单页窗体标题栏的窗体标题（"通知提醒"/"备份与恢复"/"导入与导出"/"关于"）；设置"关于"窗体的软件标题"Recur · 周期提醒"；服务卡片"下次触发时间："行的标签部分（时间值为常规字重）。字号、颜色、间距、布局等其他视觉属性不受此策略约束。
 
 ### 7.1 窗口（main.rs / ui/mod.rs）
 
@@ -155,8 +155,8 @@ src/
 - 矮窗口（< 720px）下"新建/编辑"对话框字段区滚动、操作按钮固定可见。
 - **系统标题栏**（三平台统一，不设置 `window_decorations`，默认 Server 装饰）：拖动、最大化/还原/关闭均由系统标题栏提供；无自绘标题栏，不存在双层外壳。标题文字的居中位置由窗口管理器绘制（如 xfwm4 按"左侧图标区—右侧按钮区"的剩余空间居中，非整窗宽度居中），属 WM 行为，应用侧不处理（已确认保持系统标题栏，不切换自绘）。
 - X11 下延迟重试（10 次 × 1s）写入 `WM_SIZE_HINTS` 锁宽（min=max=445，高度 [680, 16384]），避免被 gpui-fast 后端覆盖；高度方向可调，与系统标题栏最大化不冲突。
-- `app_id = "quota-watch"`（Wayland/KWin 托盘脚本按 resourceClass 匹配）。
-- 窗口标题（`titlebar.title` / X11 `WM_NAME`·`_NET_WM_NAME` / Wayland 窗口标题）三平台统一为"配置重置提醒"；技术标识符（`app_id`、crate 名、配置目录、WebDAV 前缀等）不随软件名变更。
+- `app_id = "recur"`（Wayland/KWin 托盘脚本按 resourceClass 匹配）。
+- 窗口标题（`titlebar.title` / X11 `WM_NAME`·`_NET_WM_NAME` / Wayland 窗口标题）三平台统一为"周期提醒"；技术标识符（`app_id`、crate 名、配置目录、WebDAV 前缀等）统一为 `recur`。
 - **关闭拦截**：`on_window_should_close` 阻止真正关闭，改为"最小化到托盘"（`window_control::hide_to_tray`：最小化 + 隐藏任务栏图标，KWin 优先、X11/EWMH 回退，进程常驻托盘）。
 
 ### 7.2 设置菜单入口（statusbar.rs，Header 已移除）
@@ -172,21 +172,21 @@ src/
 
 ### 7.4 服务卡片（service_card.rs）
 
-每张卡片包含：服务名（18px 粗体，**置顶条目前置标记：Linux 用 `▲`、macOS/Windows 用 `📌`**）、状态徽章（14px 白色常规字重 + 纯色背景）、28px 粗体倒计时、"下次重置："（标签粗体 + 时间值常规字重，本地时区 YYYY-MM-DD HH:MM:SS）、静音/置顶勾选框、编辑/删除按钮。勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
+每张卡片包含：服务名（18px 粗体，**置顶条目前置标记：Linux 用 `▲`、macOS/Windows 用 `📌`**）、状态徽章（14px 白色常规字重 + 纯色背景）、28px 粗体倒计时、"下次触发时间："（标签粗体 + 时间值常规字重，本地时区 YYYY-MM-DD HH:MM:SS）、静音/置顶勾选框、编辑/删除按钮。勾选框标签字号为 13px，与同行"编辑/删除"按钮文字字号一致。
 
 - **状态徽章**（按剩余时间 vs 阈值）：
 
 | 状态 | 条件 | 徽章 | 边框 |
 | --- | --- | --- | --- |
 | ★ 正常 | 剩余 > 阈值 | 绿 `#088f4e` | 主题 border |
-| ☆ 即将重置 | 0 < 剩余 ≤ 阈值 | 褐色 | 主题 warning，卡片背景加 8% warning |
-| ● 重置中 | 剩余 ≤ 0 | 主题 danger 红 | 主题 danger |
+| ☆ 即将触发 | 0 < 剩余 ≤ 阈值 | 褐色 | 主题 warning，卡片背景加 8% warning |
+| ● 已触发 | 剩余 ≤ 0 | 主题 danger 红 | 主题 danger |
 
-- 重置中显示 `00:00:00`，等待下一 tick 滚动。
+- 已触发显示 `00:00:00`，等待下一 tick 滚动。
 - **URL 交互**：配置了 `url` 的条目，卡片标题变主题色可点击，`open_url` 在系统浏览器打开；未配置则纯文本。
 - **置顶**：卡片底部操作行"静音重复提醒"旁新增"置顶"勾选框（`pin-{id}`），经 `mutate → toggle_pin` 持久化并即时重排列表，成功 Toast"已置顶/已取消置顶 <服务名>"；编辑表单不暴露置顶字段，编辑提交沿用旧条目置顶值。
 - **右键**：卡片任意位置右键 = 删除确认（与删除按钮等效）。
-- **字重分层**："最少粗体"策略下的保留粗体项仅为服务名（含置顶前缀）与倒计时数字，"下次重置："行仅标签部分加粗、时间值常规字重；状态徽章文字与操作按钮文字均使用常规字重。
+- **字重分层**："最少粗体"策略下的保留粗体项仅为服务名（含置顶前缀）与倒计时数字，"下次触发时间："行仅标签部分加粗、时间值常规字重；状态徽章文字与操作按钮文字均使用常规字重。
 - 纯函数渲染（RenderOnce 语义），每 tick 仅倒计时文本变化。
 
 ### 7.5 Footer（已移除）
@@ -207,9 +207,9 @@ src/
 
 - **对话框构造约束**：`AddEditView` 实体在 `open_dialog` **之前**创建，builder 仅引用句柄（builder 重建时不会新建实体）；初始焦点 guard（`Cell<bool>`）保证仅首次构建时聚焦服务名输入框。
 - **标题与提示样式**：对话框标题 17px 加粗（BOLD，与设置窗体标题层级一致）；字段标签与错误文本为常规字重；保存成功 Toast 文字居中。
-- **字段**：服务名、重置间隔（支持表达式）、URL（可选）、下次重置时间 或 时/分/秒倒计时（随模式切换）、提醒阈值（分钟）、周期提醒间隔（分钟）、静音（勾选框）。
-- **默认值**：新建时间隔 `5`、阈值 `60`、周期 `5`、下次重置 = now + 5h。
-- **编辑预填**：间隔 `%.2` 格式；下次重置 = 当前 `next_reset_at` 本地时区格式化；倒计时 = 距下次重置的 HH:MM:SS。
+- **字段**：服务名、间隔（支持表达式）、URL（可选）、指定触发时间 或 时/分/秒倒计时（随模式切换）、提醒阈值（分钟）、周期提醒间隔（分钟）、静音（勾选框）。
+- **默认值**：新建时间隔 `5`、阈值 `60`、周期 `5`、指定触发时间 = now + 5h。
+- **编辑预填**：间隔 `%.2` 格式；指定触发时间 = 当前 `next_reset_at` 本地时区格式化；倒计时 = 距下次触发时间的 HH:MM:SS。
 - **模式**：
   - 表单只提供 `NextReset`（默认）与 `Countdown` 两种；**旧配置中的 `LastReset` 条目打开编辑时自动按 NextReset 显示**（枚举保留该变体仅为兼容序列化）。
   - 切换模式时以当前输入推导的 `last_reset_time` 为**锚点**重新预填两套输入框（时区语义保持一致）。
@@ -230,15 +230,15 @@ src/
 
 - **光标约定**：页内所有可点击按钮统一 `cursor_pointer()` 手型光标（组件库默认按钮为系统箭头，经 `pointer_button` 助手覆盖）；对话框内部的"取消/确定"按钮由组件库渲染，不受此约束。
 - **通知提醒**：窗体内容分为两个分组（组间以主题色分隔线区隔）：
-  - **桌面通知**（分组标题，13px 加粗——用户指定覆盖 section 常规字重；说明文字"控制所有服务的桌面通知；倒计时与重置检测不受影响。"）：居中"启用"勾选框（13px 标签），变更即经 `mutate` 持久化全局开关。
-  - **通知模板**（分组标题，13px 加粗；分组间分隔线上下各留 `my_2` 间距；占位符说明采用"标签 + 内容"两栏结构——"占位符："标签固定宽、右侧每个占位符单独一行悬挂对齐（`{service} 服务名` / `{minutes} 剩余分钟数` / `{next_reset} 重置时间`），"默认值"行与"占位符"顶格对齐：`默认值：清空输入则恢复默认。`）：三个模板**多行输入框**（`Textarea`，高 64px，完整显示两行）按"标签固定宽 64px（次要色 13px，顶部对齐）+ 输入框占满剩余宽度"同行排列（"首次提醒" / "周期提醒" / "重置提醒"，打开时预填充当前对应模板），下方居中"保存"按钮。保存逻辑：各输入非空时 `trim()` 后写入 `reminder_template` 对应字段并持久化，Toast"提醒内容已保存"；任一输入为空则该字段使用默认模板写入并回填对应输入框，Toast"提醒内容已保存（空输入已恢复默认模板）"。保存成功后输入框 SHALL 失焦（`window.blur`），光标不停留在输入框内；保存失败时 Toast 显示真实错误。
+  - **桌面通知**（分组标题，13px 加粗——用户指定覆盖 section 常规字重；说明文字"控制所有服务的桌面通知；倒计时与周期检测不受影响。"）：居中"启用"勾选框（13px 标签），变更即经 `mutate` 持久化全局开关。
+  - **通知模板**（分组标题，13px 加粗；分组间分隔线上下各留 `my_2` 间距；占位符说明采用"标签 + 内容"两栏结构——"占位符："标签固定宽、右侧每个占位符单独一行悬挂对齐（`{service} 服务名` / `{minutes} 剩余分钟数` / `{next_reset} 下次触发时间`），"默认值"行与"占位符"顶格对齐：`默认值：清空输入则恢复默认。`）：三个模板**多行输入框**（`Textarea`，高 64px，完整显示两行）按"标签固定宽 64px（次要色 13px，顶部对齐）+ 输入框占满剩余宽度"同行排列（"首次提醒" / "周期提醒" / "触发提醒"，打开时预填充当前对应模板），下方居中"保存"按钮。保存逻辑：各输入非空时 `trim()` 后写入 `reminder_template` 对应字段并持久化，Toast"提醒内容已保存"；任一输入为空则该字段使用默认模板写入并回填对应输入框，Toast"提醒内容已保存（空输入已恢复默认模板）"。保存成功后输入框 SHALL 失焦（`window.blur`），光标不停留在输入框内；保存失败时 Toast 显示真实错误。
 - **备份与恢复**：
-  - WebDAV 连接配置四字段：服务器地址、用户名、密码（**掩码输入框**，不回显明文）、远程目录；"保存连接配置"（常规字重）+"测试"（small）按钮一行居中。**远程目录置空时保存/使用均回填默认值 `/quota-watch`**（项目专属子目录，避免与其它项目混在同一云端目录）。
+  - WebDAV 连接配置四字段：服务器地址、用户名、密码（**掩码输入框**，不回显明文）、远程目录；"保存连接配置"（常规字重）+"测试"（small）按钮一行居中。**远程目录置空时保存/使用均回填默认值 `/recur`**（项目专属子目录，避免与其它项目混在同一云端目录）。
   - "上传当前配置"（primary 整行）与"查看云端列表"（整行）两个操作按钮。
   - 云端列表：条目紧凑排布（`px_2 py_1`、行距 `gap_1`），每条目显示文件名 + 修改时间，右侧"恢复""删除"两个 **无边框文字按钮**（`xsmall` + `ghost` 样式，`10px` 字号；删除按钮带 `danger` 色调）；空列表提示"云端无配置文件"**整行居中**（12px muted）。
   - 恢复/删除均需居中确认框（标题"恢复云端配置/删除云端配置"，文件名描述用 12px 小字号防折行）。
   - **五类忙碌状态（测试/上传/列表/恢复/删除）一律以居中 Toast 提示框呈现进度与结果**（见 7.11），不在页面底部显示文字提示；操作期间对应按钮呈 loading 态并整体禁用相关操作，后台异步执行不阻塞 UI。
-- **导入与导出**：`rfd::FileDialog` 原生文件选择（JSON 过滤器）。导入解析 `PersistedState` 后弹居中确认框，确认即整体覆盖（服务列表、通知开关、WebDAV 配置与提醒模板）并回填设置表单；导出文件名为带时间戳的 `quota-watch_<YYYYMMDD-HHMMSS>.json`，原子写入。
+- **导入与导出**：`rfd::FileDialog` 原生文件选择（JSON 过滤器）。导入解析 `PersistedState` 后弹居中确认框，确认即整体覆盖（服务列表、通知开关、WebDAV 配置与提醒模板）并回填设置表单；导出文件名为带时间戳的 `recur_<YYYYMMDD-HHMMSS>.json`，原子写入。
 - **关于**：居中堆叠布局——应用名（15px 粗体）→ 版本号 `v<当前版本>`（12px muted）→ "检查更新"按钮单独一行（胶囊圆角）→ 一行两个胶囊描边按钮"GitHub"与"问题反馈"（均带 `IconName::Github` 图标，分别 `open_url` 仓库主页与 issues/new）。图标渲染要求 `main.rs` 以 `with_assets(gpui_kit::assets::Assets)` 注册内嵌图标资源。**检查更新**发现新版本时 Toast 附加"立即升级"按钮，点击后后台执行与 `self-update` 子命令相同的升级流程（`update::self_update_with_progress`），Toast 转为**持久进度提示**（250ms 轮询刷新下载百分比 → 解压 → 替换文案），期间提供"取消"按钮中断下载（置位取消标志，后台在检查点中止，原文件不受影响）；升级成功 Toast 附加"立即重启"按钮，点击经 `setsid`（Windows 用 `DETACHED_PROCESS`）脱离当前进程组延迟拉起新实例后退出当前应用。
 
 ### 7.11 居中提示框 Toast（toast.rs）
@@ -252,7 +252,7 @@ src/
 ## 8. 系统托盘（tray.rs）
 
 - `tray-icon` crate，Linux 走 **KSNI** 后端（D-Bus StatusNotifierItem，不依赖 GTK 事件循环）。
-- 图标：内嵌 `assets/icons/quota-watch-128.png`；tooltip"配置重置提醒"。
+- 图标：内嵌 `assets/icons/recur-128.png`；tooltip"周期提醒"。
 - 事件（TrayIconEvent + MenuEvent）经 crossbeam channel 投递，后台 task 每 100ms 轮询消费。
 - **左键单击**：恢复并置顶激活窗口（`window_control::restore_from_tray`：先清 SKIP_TASKBAR 再激活，X11 经 EWMH `_NET_ACTIVE_WINDOW`；Wayland 走 KWin 脚本），置可见标志。
 - **右键菜单**：
@@ -277,7 +277,7 @@ src/
 
 ### 9.2 KWin D-Bus 脚本（kwin.rs）
 
-Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-Bus 脚本接口**（写临时 JS → loadScript → run → unload，匹配 `resourceClass` 含 "quota" 的窗口）：
+Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-Bus 脚本接口**（写临时 JS → loadScript → run → unload，匹配 `resourceClass` 含 "recur" 的窗口）：
 
 - `activate_via_kwin`：取消最小化、显示任务栏图标、置顶并激活。
 - `hide_via_kwin`：最小化并隐藏任务栏图标（进程保持运行）。
@@ -285,10 +285,10 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 
 ## 10. WebDAV 云端备份（webdav.rs）
 
-- 客户端基于 `reqwest`（blocking）+ Basic Auth（用户名密码均为空时不带认证），30s 超时，UA `quota-watch/<版本>`。
+- 客户端基于 `reqwest`（blocking）+ Basic Auth（用户名密码均为空时不带认证），30s 超时，UA `recur/<版本>`。
 - **连接测试**：对配置的远程目录 URL 发 PROPFIND `Depth: 0`，状态成功即可用。
-- **列目录**：PROPFIND `Depth: 1` 解析 multistatus XML，仅保留配置文件（`is_services_file`：`quota-watch` 前缀且以 `.json` 结尾，**不兼容历史 `services` 前缀**），按修改时间降序。
-- **上传**：文件名由 `timestamped_filename()` 生成为 `quota-watch_<YYYYMMDD-HHMMSS>.json`（不重名），PUT JSON 内容。**上传前 WebDAV 密码字段加密**：`encrypt_persisted` 用内嵌密钥的 XChaCha20-Poly1305（AEAD）加密，输出 `enc:v1:<base64(nonce||密文)>`，云端备份不含明文密码（内嵌密钥防云服务商侧直接读密码，不防反编译本程序者）。
+- **列目录**：PROPFIND `Depth: 1` 解析 multistatus XML，仅保留配置文件（`is_services_file`：`recur` 前缀且以 `.json` 结尾，兼容旧版 `quota-watch` 前缀，**不兼容更早的 `services` 前缀**），按修改时间降序。
+- **上传**：文件名由 `timestamped_filename()` 生成为 `recur_<YYYYMMDD-HHMMSS>.json`（不重名），PUT JSON 内容。**上传前 WebDAV 密码字段加密**：`encrypt_persisted` 用内嵌密钥的 XChaCha20-Poly1305（AEAD）加密，输出 `enc:v1:<base64(nonce||密文)>`，云端备份不含明文密码（内嵌密钥防云服务商侧直接读密码，不防反编译本程序者）。
 - **恢复**：GET 下载后解析 `PersistedState`，`decrypt_persisted` 解密密码（无 `enc:v1:` 前缀的历史明文备份原样兼容），再覆盖本地（含 webdav_config）——UI 层已加确认框。本地导入（7.10 导入与导出）同样兼容解密。
 - **删除**：DELETE 指定文件。
 - **自动建目录**：`list_files` / `upload_file` 前先对目录 URL 发 MKCOL（`ensure_directory`）；目录已存在时服务器返回 405 等状态**一律忽略**，真正的错误由后续操作暴露——避免首次使用因目录不存在报 404。
@@ -296,15 +296,15 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 
 ## 11. 更新检查（update.rs）
 
-- `check_latest()`：请求 GitHub Releases `latest` API，返回 `ReleaseInfo { version, assets }`（`version` 去 `v` 前缀；`assets` 为 `Vec<Asset { name, download_url }>`，对应 API 的 `assets` 数组项 `name` + `browser_download_url`）。调试时可设环境变量 `QUOTA_WATCH_RELEASES_API` 指向本地 Mock 服务器。
+- `check_latest()`：请求 GitHub Releases `latest` API，返回 `ReleaseInfo { version, assets }`（`version` 去 `v` 前缀；`assets` 为 `Vec<Asset { name, download_url }>`，对应 API 的 `assets` 数组项 `name` + `browser_download_url`）。调试时可设环境变量 `RECUR_RELEASES_API` 指向本地 Mock 服务器。
 - `is_newer(latest, current)`：**完整 semver 比较**。`version_key` 解析主版本段为 `(major, minor, patch)` 三级元组（去 `v` 前缀、按 `.` 分段、每段取 `-`/`+` 之前的数字，非数字记 0）；主版本段不同直接比较。**预发布段参与比较**：有预发布段（`-` 之后、`+` 之前）的版本小于同主版本段的正式版，预发布之间逐标识符比较（数字按数值、字母按字符串、数字 < 字母，标识符更多的一方更大）。如 `0.2.0-beta.2 > 0.2.0-beta.1`，`0.2.0 > 0.2.0-beta.1`，`0.3.0-alpha > 0.2.9`。
 - `select_platform_asset(assets)`：按编译期 `target_os` + `target_arch` 关键词匹配资产（文件名小写需同时包含 os 关键词——macOS 为 `darwin`——与 arch 关键词，且以平台压缩包格式结尾：Linux/macOS `.tar.xz`、Windows `.zip`），返回第一个匹配项；deb/rpm/SHA256SUMS 等非压缩包资产被扩展名过滤排除。
-- `self_update_with_progress(is_cancelled, on_progress)`：完整自升级流程——`check_latest()` → `is_newer()` 比较（已是最新返回 `UpdateOutcome::AlreadyUpToDate`）→ `select_platform_asset()` 匹配 → `reqwest::blocking` 下载到临时文件（600s 超时，64KB 分块读写，`Content-Length` 计算百分比）→ `extract_binary` 解压（tar.xz 取包内 `quota-watch`，zip 取 `.exe`）→ 暂存到 exe 同目录（跨文件系统 rename 会 EXDEV，先 copy 落地同文件系统）→ 设可执行权限（Unix `0o755`）→ 原子替换（Linux 直接 `rename` 覆盖运行中二进制；Windows 先 rename 旧文件为 `.old` 腾路径，失败回滚，遗留的 `.old` 在下次升级开始时清理）。`is_cancelled` 在每个阶段边界轮询，返回 true 时以 `UpdateCancelled` 中止并清理临时文件。`on_progress` 回调报告 `UpdateProgress::Downloading` / `Extracting` / `Replacing`。
+- `self_update_with_progress(is_cancelled, on_progress)`：完整自升级流程——`check_latest()` → `is_newer()` 比较（已是最新返回 `UpdateOutcome::AlreadyUpToDate`）→ `select_platform_asset()` 匹配 → `reqwest::blocking` 下载到临时文件（600s 超时，64KB 分块读写，`Content-Length` 计算百分比）→ `extract_binary` 解压（tar.xz 取包内 `recur`，兼容旧资产包内的 `quota-watch`；zip 取 `.exe`）→ 暂存到 exe 同目录（跨文件系统 rename 会 EXDEV，先 copy 落地同文件系统）→ 设可执行权限（Unix `0o755`）→ 原子替换（Linux 直接 `rename` 覆盖运行中二进制；Windows 先 rename 旧文件为 `.old` 腾路径，失败回滚，遗留的 `.old` 在下次升级开始时清理）。`is_cancelled` 在每个阶段边界轮询，返回 true 时以 `UpdateCancelled` 中止并清理临时文件。`on_progress` 回调报告 `UpdateProgress::Downloading` / `Extracting` / `Replacing`。
 - `current_exe_path()`：规范化当前可执行文件路径，剥离 Linux 升级替换后 `/proc/self/exe` 带的 ` (deleted)` 后缀。
 - `UpdateOutcome`：`AlreadyUpToDate`（已是最新） / `Updated`（已替换，重启后生效）。
 - 常量：`REPO_URL`（仓库主页）、`ISSUES_URL`（`issues/new` 问题反馈页）、`CURRENT_VERSION`（`CARGO_PKG_VERSION`）。
 - CLI `self-update` 子命令调用 `self_update_with_progress`，进度以 `\r` 原地刷新；UI"关于"标签"检查更新"发现新版本时 Toast 附加"立即升级"按钮，触发同一升级流程（见 7.10）。
-- **macOS 产物与资产匹配**：CI 产出三类 macOS 资产——`*-apple-darwin.tar.xz` 裸二进制（x86_64/aarch64，ad-hoc 签名）与 `*-universal.app.tar.xz`（Universal ad-hoc 签名、未公证的 `.app`，`CFBundleIdentifier` 为 `cn.gcli.quota-watch`，与 `persistence.rs` 应用标识一致）。本项目无 Apple Developer 账号，不提供公证产物，仅做零成本 ad-hoc 签名（`codesign --force --sign -` + `codesign --verify` 自检）；`.app` 与裸二进制均经签名，macOS Sequoia 15.1+ 下可被 LaunchServices/Gatekeeper 识别（双击 `.app` 走标准未公证警告流程，不再弹"选择应用"）。`.app` tarball 文件名不含 `apple-darwin` 与单 `arch` 关键词，`select_platform_asset` **不会匹配它**，自更新始终选择裸二进制 tarball，两者互不干扰（macOS 首次运行放行方式见 README）。
+- **macOS 产物与资产匹配**：CI 产出三类 macOS 资产——`*-apple-darwin.tar.xz` 裸二进制（x86_64/aarch64，ad-hoc 签名）与 `*-universal.app.tar.xz`（Universal ad-hoc 签名、未公证的 `.app`，`CFBundleIdentifier` 为 `cn.gcli.recur`，与 `persistence.rs` 应用标识一致）。本项目无 Apple Developer 账号，不提供公证产物，仅做零成本 ad-hoc 签名（`codesign --force --sign -` + `codesign --verify` 自检）；`.app` 与裸二进制均经签名，macOS Sequoia 15.1+ 下可被 LaunchServices/Gatekeeper 识别（双击 `.app` 走标准未公证警告流程，不再弹"选择应用"）。`.app` tarball 文件名不含 `apple-darwin` 与单 `arch` 关键词，`select_platform_asset` **不会匹配它**，自更新始终选择裸二进制 tarball，两者互不干扰（macOS 首次运行放行方式见 README）。
 
 ## 12. 测试规范
 
@@ -319,8 +319,8 @@ Wayland 协议缺少 unminimize 与 skip_taskbar 能力，统一通过 **KWin D-
 - 版本比较：`is_newer` 数值段比较、`version_key` 去 `v` 前缀/后缀、预发布段比较（beta.2 > beta.1、预发布 < 正式版、主版本段优先、标识符更多者更大）。
 - 资产匹配：`select_platform_asset` 当前平台匹配、无匹配返回 None、deb/rpm/SHA256SUMS 等非压缩包资产跳过。
 - 解压：`extract_binary` tar.xz 解包裸二进制成功、包内无可执行文件时失败。
-- 决策引擎单测（阈值外无动作、首次仅一次、周期间隔、静音抑制 B 不抑制 A、全局禁用抑制 A/B 不抑制 C、重置多周期对齐、完整周期 A→B→C）。
-- 集成测试（加载→tick→通知→重置滚动；静音/全局开关/通知失败不中断）。
+- 决策引擎单测（阈值外无动作、首次仅一次、周期间隔、静音抑制 B 不抑制 A、全局禁用抑制 A/B 不抑制 C、触发多周期对齐、完整周期 A→B→C）。
+- 集成测试（加载→tick→通知→触发滚动；静音/全局开关/通知失败不中断）。
 - 性能基准（60 服务 < 8ms/tick）。
 
 运行：`cargo test`。

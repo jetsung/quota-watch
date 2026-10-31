@@ -9,18 +9,18 @@ use std::io::Write as _;
 use std::time::Duration;
 
 /// 仓库首页（关于页展示）。
-pub const REPO_URL: &str = "https://github.com/jetsung/quota-watch";
+pub const REPO_URL: &str = "https://github.com/jetsung/recur";
 /// 提交问题的地址（关于页“问题反馈”按钮）。
-pub const ISSUES_URL: &str = "https://github.com/jetsung/quota-watch/issues/new";
+pub const ISSUES_URL: &str = "https://github.com/jetsung/recur/issues/new";
 /// 当前版本。
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const LATEST_RELEASE_API: &str = "https://api.github.com/repos/jetsung/quota-watch/releases/latest";
+const LATEST_RELEASE_API: &str = "https://api.github.com/repos/jetsung/recur/releases/latest";
 
-/// Releases latest API 地址。调试时可设环境变量 `QUOTA_WATCH_RELEASES_API`
+/// Releases latest API 地址。调试时可设环境变量 `RECUR_RELEASES_API`
 /// 指向本地 Mock 服务器（如 `http://127.0.0.1:8929/latest.json`），避免每次拉取 GitHub 都很慢。
 fn latest_release_api() -> String {
-    std::env::var("QUOTA_WATCH_RELEASES_API").unwrap_or_else(|_| LATEST_RELEASE_API.to_string())
+    std::env::var("RECUR_RELEASES_API").unwrap_or_else(|_| LATEST_RELEASE_API.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +55,7 @@ struct LatestAsset {
 pub fn check_latest() -> anyhow::Result<ReleaseInfo> {
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent(concat!("quota-watch/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("recur/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("创建 HTTP 客户端失败")?;
     let response = client
@@ -260,8 +260,8 @@ pub fn self_update_with_progress(
 
     let exe = current_exe_path()?;
     let temp_dir = std::env::temp_dir();
-    let archive = temp_dir.join(format!("quota-watch-update-{}.pack", std::process::id()));
-    let temp = temp_dir.join(format!("quota-watch-update-{}", std::process::id()));
+    let archive = temp_dir.join(format!("recur-update-{}.pack", std::process::id()));
+    let temp = temp_dir.join(format!("recur-update-{}", std::process::id()));
 
     // 取消检查：中止升级并清理已下载的临时文件（未替换前原文件不受影响）
     let cancelled = || -> anyhow::Result<()> {
@@ -282,7 +282,7 @@ pub fn self_update_with_progress(
 
     let client = Client::builder()
         .timeout(Duration::from_secs(600))
-        .user_agent(concat!("quota-watch/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("recur/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("创建 HTTP 客户端失败")?;
     let mut response = client
@@ -350,7 +350,7 @@ pub fn self_update_with_progress(
 }
 
 /// 从升级压缩包中解出裸二进制写入 `dest`。
-/// Linux/macOS 资产为 tar.xz（包内单文件 `quota-watch`）；Windows 资产为 zip（包内 `quota-watch.exe`）。
+/// Linux/macOS 资产为 tar.xz（包内单文件 `recur`）；Windows 资产为 zip（包内 `recur.exe`）。
 fn extract_binary(archive_path: &std::path::Path, dest: &std::path::Path) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
@@ -384,14 +384,14 @@ fn extract_binary(archive_path: &std::path::Path, dest: &std::path::Path) -> any
             let is_binary = entry
                 .path()
                 .ok()
-                .and_then(|p| p.file_name().map(|n| n == "quota-watch"))
+                .and_then(|p| p.file_name().map(|n| n == "recur" || n == "quota-watch"))
                 .unwrap_or(false);
             if is_binary {
                 entry.unpack(dest).context("解压升级包内容失败")?;
                 return Ok(());
             }
         }
-        anyhow::bail!("tar 升级包内未找到 quota-watch 可执行文件")
+        anyhow::bail!("tar 升级包内未找到 recur 可执行文件")
     }
 }
 
@@ -445,16 +445,16 @@ mod tests {
     /// 与真实 Release 一致的资产清单（v0.1.0 格式）。
     fn release_assets() -> Vec<Asset> {
         vec![
-            asset("quota-watch-0.1.0-1.aarch64.rpm"),
-            asset("quota-watch-0.1.0-1.x86_64.rpm"),
-            asset("quota-watch-v0.1.0-aarch64-apple-darwin.tar.xz"),
-            asset("quota-watch-v0.1.0-aarch64-pc-windows-msvc.zip"),
-            asset("quota-watch-v0.1.0-aarch64-unknown-linux-gnu.tar.xz"),
-            asset("quota-watch-v0.1.0-x86_64-apple-darwin.tar.xz"),
-            asset("quota-watch-v0.1.0-x86_64-pc-windows-msvc.zip"),
-            asset("quota-watch-v0.1.0-x86_64-unknown-linux-gnu.tar.xz"),
-            asset("quota-watch_0.1.0-1_amd64.deb"),
-            asset("quota-watch_0.1.0-1_arm64.deb"),
+            asset("recur-0.1.0-1.aarch64.rpm"),
+            asset("recur-0.1.0-1.x86_64.rpm"),
+            asset("recur-v0.1.0-aarch64-apple-darwin.tar.xz"),
+            asset("recur-v0.1.0-aarch64-pc-windows-msvc.zip"),
+            asset("recur-v0.1.0-aarch64-unknown-linux-gnu.tar.xz"),
+            asset("recur-v0.1.0-x86_64-apple-darwin.tar.xz"),
+            asset("recur-v0.1.0-x86_64-pc-windows-msvc.zip"),
+            asset("recur-v0.1.0-x86_64-unknown-linux-gnu.tar.xz"),
+            asset("recur_0.1.0-1_amd64.deb"),
+            asset("recur_0.1.0-1_arm64.deb"),
             asset("SHA256SUMS.txt"),
         ]
     }
@@ -474,8 +474,8 @@ mod tests {
     fn select_platform_asset_skips_non_archive_assets() {
         // deb/rpm/SHA256SUMS 不含 os 关键词或扩展名不符，均不应命中
         let assets = vec![
-            asset("quota-watch-0.1.0-1.x86_64.rpm"),
-            asset("quota-watch_0.1.0-1_amd64.deb"),
+            asset("recur-0.1.0-1.x86_64.rpm"),
+            asset("recur_0.1.0-1_amd64.deb"),
             asset("SHA256SUMS.txt"),
         ];
         if os_keyword() != "windows" {
@@ -491,7 +491,7 @@ mod tests {
         let archive_path = dir.join("pack.tar.xz");
         let dest = dir.join("binary-out");
 
-        // 构造与真实 Release 相同结构的 tar.xz：单文件 quota-watch
+        // 构造与真实 Release 相同结构的 tar.xz：单文件 recur
         let payload = b"#!/bin/sh\necho fake-binary\n";
         let tar_bytes = {
             let mut builder = tar::Builder::new(Vec::new());
@@ -500,7 +500,7 @@ mod tests {
             header.set_mode(0o755);
             header.set_cksum();
             builder
-                .append_data(&mut header, "quota-watch", &payload[..])
+                .append_data(&mut header, "recur", &payload[..])
                 .unwrap();
             builder.into_inner().unwrap()
         };
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn select_platform_asset_returns_none_when_no_match() {
-        let assets = vec![asset("quota-watch-armv7-unknown-freebsd.tar.xz")];
+        let assets = vec![asset("recur-armv7-unknown-freebsd.tar.xz")];
         assert!(select_platform_asset(&assets).is_none());
         assert!(select_platform_asset(&[]).is_none());
     }

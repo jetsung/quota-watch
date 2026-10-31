@@ -18,7 +18,7 @@ use uuid::Uuid;
 const LAST_RESET_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Add/Edit 共用的表单视图。
-/// 字段：service_name / interval_hours /（NextReset 或 Countdown 模式的重置时间输入）/
+/// 字段：service_name / interval_hours /（NextReset 或 Countdown 模式的时间输入）/
 /// reminder_threshold_minutes / secondary_reminder_interval_minutes / is_muted。
 /// 提交时执行 `ServiceEntry::validate`，失败显示内联错误；成功则关闭对话框并 Toast。
 /// 任意输入框内按回车等同点击"保存"。编辑预填充；关键计时字段变更由 `AppState::update` 自动重置 RuntimeFlags。
@@ -29,17 +29,17 @@ pub struct AddEditView {
     /// 自绘标题栏的标题文字（编辑服务：xxx / 添加服务）。
     title: String,
     editing: Option<ServiceEntry>,
-    /// 当前表单的重置配置模式（仅影响输入语义）。
+    /// 当前表单的时间配置模式（仅影响输入语义）。
     /// 枚举仍保留 LastReset 变体以兼容旧配置序列化，但表单不再提供该选项，
     /// 打开编辑旧 LastReset 条目时自动按 NextReset 模式显示。
     reset_config_mode: models::ResetConfigMode,
     name: Entity<InputState>,
     interval: Entity<InputState>,
-    /// NextReset 模式：下次重置的绝对时间（按系统本地时区解释）。
+    /// NextReset 模式：指定触发时间的绝对时间点（按系统本地时区解释）。
     next_reset: Entity<InputState>,
     /// 可选服务主页 URL：卡片标题点击时在系统浏览器打开。
     url: Entity<InputState>,
-    /// Countdown 模式：距下次重置的剩余时长（时/分/秒）。
+    /// Countdown 模式：距下次触发时间的剩余时长（时/分/秒）。
     cd_h: Entity<InputState>,
     cd_m: Entity<InputState>,
     cd_s: Entity<InputState>,
@@ -208,7 +208,7 @@ impl AddEditView {
         }
     }
 
-    /// 切换重置配置模式：以当前推导的 last_reset_time 为锚点重新预填各输入框。
+    /// 切换时间配置模式：以当前推导的 last_reset_time 为锚点重新预填各输入框。
     fn switch_mode(
         &mut self,
         mode: models::ResetConfigMode,
@@ -250,7 +250,7 @@ impl AddEditView {
         let interval: f64 = match models::parse_interval_expr(&interval_text) {
             Some(v) => v,
             None => {
-                self.error = Some("重置间隔必须是数字或公式，如 5 * 7（小时）".into());
+                self.error = Some("间隔必须是数字或公式，如 5 * 7（小时）".into());
                 cx.notify();
                 return;
             }
@@ -316,7 +316,7 @@ impl AddEditView {
                         next - chrono::Duration::seconds((interval * 3600.0).round() as i64)
                     }
                     None => {
-                        self.error = Some("下次重置时间格式应为 YYYY-MM-DD HH:MM:SS".into());
+                        self.error = Some("时间格式应为 YYYY-MM-DD HH:MM:SS".into());
                         cx.notify();
                         return;
                     }
@@ -434,16 +434,16 @@ impl Render for AddEditView {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(field_label("重置间隔（小时，支持公式，如 5 * 7）"))
+                    .child(field_label("间隔（小时，支持公式，如 5 * 7）"))
                     .child(Input::new(&self.interval).w_full()),
             )
             .child(
-                // 模式切换控件（NextReset / Countdown 两种重置配置模式）
+                // 模式切换控件（NextReset / Countdown 两种时间配置模式）
                 h_flex()
                     .gap_2()
                     .child(
                         Button::new("mode-next-reset")
-                            .label("下次重置时间")
+                            .label("指定触发时间")
                             .when(
                                 self.reset_config_mode == models::ResetConfigMode::NextReset,
                                 |b| b.primary(),

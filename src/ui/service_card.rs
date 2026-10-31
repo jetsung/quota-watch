@@ -52,14 +52,14 @@ pub fn render_service_card(
         theme.border
     };
     // 状态徽章：emoji + 白色粗体文字 + 纯色背景。
-    // 正常=用户指定绿（#088f4e），即将重置=褐色，重置中=danger 红。
+    // 正常=用户指定绿（#088f4e），即将触发=褐色，已触发=danger 红。
     let green_bg: gpui_kit::Hsla = gpui_kit::rgb(0x088f4e).into();
-    // 褐色（即将重置）：主题体系无 brown token，使用固定深褐色
+    // 褐色（即将触发）：主题体系无 brown token，使用固定深褐色
     let brown = gpui_kit::hsla(0.07, 0.72, 0.38, 1.0);
     let (status_text, badge_bg) = if remaining_secs <= 0 {
-        ("● 重置中", theme.colors.danger)
+        ("● 已触发", theme.colors.danger)
     } else if urgent {
-        ("☆ 即将重置", brown)
+        ("☆ 即将触发", brown)
     } else {
         ("★ 正常", green_bg)
     };
@@ -146,7 +146,7 @@ pub fn render_service_card(
             .child(
                 div()
                     .font_weight(gpui_kit::FontWeight::BOLD)
-                    .child("下次重置："),
+                    .child("下次触发时间："),
             )
             .child(div().child(next_local)),
     )

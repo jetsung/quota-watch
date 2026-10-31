@@ -77,7 +77,7 @@ pub fn set_window_icon(window: &Window) {
     let Some(h) = hwnd(window) else {
         return;
     };
-    let Ok(img) = image::load_from_memory(include_bytes!("../assets/icons/quota-watch-256.png"))
+    let Ok(img) = image::load_from_memory(include_bytes!("../assets/icons/recur-256.png"))
         .map(|i| i.to_rgba8())
     else {
         return;
@@ -135,7 +135,7 @@ pub fn set_window_icon(window: &Window) {
 }
 
 /// `--version` 输出回退：GUI 子系统（release）无控制台时尝试附加父进程控制台，
-/// 使从终端运行 `quota-watch --version` 仍能看到版本号；附加失败（如双击）则静默。
+/// 使从终端运行 `recur --version` 仍能看到版本号；附加失败（如双击）则静默。
 #[cfg_attr(debug_assertions, allow(dead_code))] // 仅 release 分支调用
 pub fn attach_parent_console() {
     let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };

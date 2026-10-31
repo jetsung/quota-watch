@@ -25,7 +25,7 @@ use ui::toast::BottomToast as _;
 /// `help` 子命令：打印用法说明。
 fn print_help() {
     println!(
-        "quota-watch {}\n\n用法：quota-watch [子命令]\n\n子命令：\n  version      打印版本号后退出\n  self-update  检查并升级到最新版本（重启应用后生效）\n  help         打印本帮助信息\n\n不带子命令时启动图形界面。",
+        "recur {}\n\n用法：recur [子命令]\n\n子命令：\n  version      打印版本号后退出\n  self-update  检查并升级到最新版本（重启应用后生效）\n  help         打印本帮助信息\n\n不带子命令时启动图形界面。",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -67,7 +67,7 @@ fn main() {
             // Release（GUI 子系统）无控制台：附加父进程控制台后打印；失败（如双击）静默。
             #[cfg(all(target_os = "windows", not(debug_assertions)))]
             win32::attach_parent_console();
-            println!("quota-watch {}", env!("CARGO_PKG_VERSION"));
+            println!("recur {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         Some(cmd) if cmd == "help" => {
@@ -147,13 +147,13 @@ fn main() {
                     window_min_size: Some(gpui_kit::size(gpui_kit::px(445.), gpui_kit::px(680.))),
                     // titlebar.title 用于设置 X11 的 WM_NAME/_NET_WM_NAME 与 Wayland 的窗口标题
                     titlebar: Some(gpui_kit::TitlebarOptions {
-                        title: Some("配置重置提醒".into()),
+                        title: Some("周期提醒".into()),
                         ..Default::default()
                     }),
                     // 三平台统一使用系统标题栏：不设置 window_decorations（默认 Server），
                     // 窗口拖动与最大化/还原/关闭均由系统标题栏处理。
                     // Wayland/KWin 下托盘脚本按 resourceClass 匹配窗口
-                    app_id: Some("quota-watch".into()),
+                    app_id: Some("recur".into()),
                     ..Default::default()
                 },
                 cx,

@@ -3,29 +3,29 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// 重置时间配置模式：仅影响表单输入语义，不影响 `next_reset_at` 计算。
+/// 时间配置模式：仅影响表单输入语义，不影响 `next_reset_at` 计算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetConfigMode {
-    /// 上次重置时间 + 间隔（现有模式）。
+    /// 上次触发时间 + 间隔（现有模式）。
     #[default]
     LastReset,
-    /// 直接输入下次重置的绝对时间点（按全局时区解释）。
+    /// 直接输入指定触发时间的绝对时间点（按全局时区解释）。
     NextReset,
-    /// 输入距下次重置的剩余时长（以 now 为基准）。
+    /// 输入距下次触发时间的剩余时长（以 now 为基准）。
     Countdown,
 }
 
-/// 单个服务的配额重置配置（持久化单元）。
+/// 单个条目的周期配置（持久化单元）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ServiceEntry {
     pub id: Uuid,
     pub service_name: String,
-    /// 重置间隔（小时），>0，允许浮点（如 5.5 = 5h30m）。
+    /// 间隔（小时），>0，允许浮点（如 5.5 = 5h30m）。
     pub interval_hours: f64,
-    /// 上次重置时间（内部一律 UTC 存储）。
+    /// 上次触发时间（内部一律 UTC 存储）。
     pub last_reset_time: DateTime<Utc>,
-    /// 首次提醒阈值（分钟），距重置不足该时长时触发 Condition A。
+    /// 首次提醒阈值（分钟），距下次触发时间不足该时长时触发 Condition A。
     pub reminder_threshold_minutes: u32,
     /// 周期性提醒间隔（分钟），Condition B。
     pub secondary_reminder_interval_minutes: u32,
@@ -44,7 +44,7 @@ pub struct ServiceEntry {
     pub pinned_at: Option<DateTime<Utc>>,
 }
 
-/// 解析重置间隔表达式（单位：小时）：支持十进制数（含小数点）与
+/// 解析间隔表达式（单位：小时）：支持十进制数（含小数点）与
 /// `+ - * /` 四则运算、括号及空白，如 `"5"`、`"5.5"`、`"5.00 * 7"`（= 35）。
 /// 非法表达式、除零（结果非有限值）返回 None。
 pub fn parse_interval_expr(input: &str) -> Option<f64> {
@@ -169,7 +169,7 @@ impl ServiceEntry {
             anyhow::bail!("interval_hours 必须大于 0");
         }
         if self.reminder_threshold_minutes as f64 * 60.0 > self.interval_hours * 3600.0 {
-            anyhow::bail!("提醒阈值不能超过重置间隔");
+            anyhow::bail!("提醒阈值不能超过间隔");
         }
         if self.secondary_reminder_interval_minutes == 0 {
             anyhow::bail!("周期性提醒间隔必须大于 0");
@@ -186,13 +186,13 @@ impl ServiceEntry {
         Ok(())
     }
 
-    /// 下次重置时间 = last_reset_time + interval_hours*3600（浮点取整）。
+    /// 下次触发时间 = last_reset_time + interval_hours*3600（浮点取整）。
     pub fn next_reset_at(&self) -> DateTime<Utc> {
         let secs = (self.interval_hours * 3600.0).round() as i64;
         self.last_reset_time + chrono::Duration::seconds(secs)
     }
 
-    /// 距下次重置的剩余时长（now 之后为正；已过期则为负）。
+    /// 距下次触发时间的剩余时长（now 之后为正；已过期则为负）。
     pub fn time_until_reset(&self, now: DateTime<Utc>) -> chrono::Duration {
         self.next_reset_at() - now
     }
@@ -232,7 +232,7 @@ pub struct WebdavConfig {
 }
 
 /// 提醒内容模板（全局一份，持久化存储），三类提醒各自独立配置。
-/// 占位符：`{service}` 服务名、`{minutes}` 剩余分钟数、`{next_reset}` 本地时区下次重置时间。
+/// 占位符：`{service}` 服务名、`{minutes}` 剩余分钟数、`{next_reset}` 本地时区下次触发时间。
 /// 未知占位符渲染时原样保留。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReminderTemplate {
@@ -240,16 +240,16 @@ pub struct ReminderTemplate {
     pub title_first_alert: String,
     /// 周期提醒（Condition B）标题模板。
     pub title_recurring: String,
-    /// 重置提醒（Condition C）标题模板。
+    /// 触发提醒（Condition C）标题模板。
     pub title_reset: String,
 }
 
 impl Default for ReminderTemplate {
     fn default() -> Self {
         ReminderTemplate {
-            title_first_alert: "[{service}] 将在 {minutes} 分钟后重置".into(),
-            title_recurring: "[{service}] 即将重置！还剩 {minutes} 分钟".into(),
-            title_reset: "[{service}] 配额已重置".into(),
+            title_first_alert: "[{service}] 将在 {minutes} 分钟后触发".into(),
+            title_recurring: "[{service}] 即将触发！还剩 {minutes} 分钟".into(),
+            title_reset: "[{service}] 已触发".into(),
         }
     }
 }
@@ -574,13 +574,13 @@ mod tests {
                 "server_url": "https://dav.example.com",
                 "username": "user",
                 "password": "secret",
-                "remote_dir": "/quota-watch"
+                "remote_dir": "/recur"
             }
         }"#;
         let state: PersistedState = serde_json::from_str(json).unwrap();
         let cfg = state.webdav_config.clone().unwrap();
         assert_eq!(cfg.server_url, "https://dav.example.com");
-        assert_eq!(cfg.remote_dir, "/quota-watch");
+        assert_eq!(cfg.remote_dir, "/recur");
 
         let serialized = serde_json::to_string(&state).unwrap();
         let back: PersistedState = serde_json::from_str(&serialized).unwrap();

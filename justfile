@@ -1,4 +1,4 @@
-# quota-watch 构建 / 开发 / 发布命令
+# recur 构建 / 开发 / 发布命令
 # 用法: just [命令] [参数]（不带参数显示命令列表）
 
 # 显示命令列表（默认）
@@ -16,7 +16,7 @@ dev:
 # 编译 release 版本并运行（与 dev 流程类似；xfce 下 WM 交互行为需以 release 产物验证）
 [group('build')]
 run:
-    cargo build --release && "{{target_dir}}/release/quota-watch"
+    cargo build --release && "{{target_dir}}/release/recur"
 
 # 编译 release 版本
 [group('build')]
@@ -46,7 +46,7 @@ fmt:
 # 打包当前平台的 release 构建产物（本机原生构建，不做跨平台编译）
 [group('package')]
 package:
-    @cargo build --release && VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2) && mkdir -p dist && if [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ]; then tar -cJf "dist/quota-watch-v$VER-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz" -C "{{target_dir}}/release" quota-watch; else zip -j "dist/quota-watch-v$VER-windows-$(uname -m).zip" "{{target_dir}}/release/quota-watch.exe"; fi && ls -lh dist/
+    @cargo build --release && VER=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2) && mkdir -p dist && if [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ]; then tar -cJf "dist/recur-v$VER-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz" -C "{{target_dir}}/release" recur; else zip -j "dist/recur-v$VER-windows-$(uname -m).zip" "{{target_dir}}/release/recur.exe"; fi && ls -lh dist/
 
 # 构建 .deb 包（Linux）
 [group('package')]

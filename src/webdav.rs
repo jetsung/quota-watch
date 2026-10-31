@@ -56,7 +56,7 @@ impl WebdavClient {
         }
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent(concat!("quota-watch/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("recur/", env!("CARGO_PKG_VERSION")))
             .build()
             .context("创建 HTTP 客户端失败")?;
         Ok(Self {
@@ -183,9 +183,9 @@ impl WebdavClient {
     }
 }
 
-/// 生成 `quota-watch_%Y%m%d-%H%M%S.json` 形式的上传文件名。
+/// 生成 `recur_%Y%m%d-%H%M%S.json` 形式的上传文件名。
 pub fn timestamped_filename() -> String {
-    format!("quota-watch_{}.json", Local::now().format("%Y%m%d-%H%M%S"))
+    format!("recur_{}.json", Local::now().format("%Y%m%d-%H%M%S"))
 }
 
 /// 云端备份中加密密码字段的前缀标记（`enc:v1:<base64(nonce||ciphertext)>`）。
@@ -371,9 +371,10 @@ fn filename_from_href(href: &str) -> Option<String> {
     Some(percent_decode(last))
 }
 
-/// 云端配置文件识别：仅接受 `quota-watch` 前缀的 `.json` 备份（不兼容历史 `services` 前缀）。
+/// 云端配置文件识别：接受 `recur` 前缀的 `.json` 备份，并兼容旧版 `quota-watch` 前缀；
+/// 不兼容更早的 `services` 前缀。
 fn is_services_file(name: &str) -> bool {
-    name.starts_with("quota-watch") && name.ends_with(".json")
+    name.ends_with(".json") && (name.starts_with("recur") || name.starts_with("quota-watch"))
 }
 
 fn encode_path_segment(segment: &str) -> String {
@@ -425,28 +426,28 @@ mod tests {
     const PROPFIND_RESPONSE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:">
   <d:response>
-    <d:href>/dav/quota-watch/</d:href>
+    <d:href>/dav/recur/</d:href>
     <d:propstat>
       <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
   <d:response>
-    <d:href>/dav/quota-watch/quota-watch_20261022-013000.json</d:href>
+    <d:href>/dav/recur/recur_20261022-013000.json</d:href>
     <d:propstat>
       <d:prop><d:getlastmodified>Thu, 22 Oct 2026 01:30:00 GMT</d:getlastmodified></d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
   <d:response>
-    <d:href>/dav/quota-watch/quota-watch_20261021-120000.json</d:href>
+    <d:href>/dav/recur/recur_20261021-120000.json</d:href>
     <d:propstat>
       <d:prop><d:getlastmodified>Wed, 21 Oct 2026 12:00:00 GMT</d:getlastmodified></d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
   <d:response>
-    <d:href>/dav/quota-watch/other.json</d:href>
+    <d:href>/dav/recur/other.json</d:href>
     <d:propstat>
       <d:prop><d:getlastmodified>Wed, 21 Oct 2026 12:00:00 GMT</d:getlastmodified></d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
@@ -458,8 +459,8 @@ mod tests {
     fn parse_propfind_extracts_services_files_sorted_desc() {
         let files = parse_propfind(PROPFIND_RESPONSE).unwrap();
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].name, "quota-watch_20261022-013000.json");
-        assert_eq!(files[1].name, "quota-watch_20261021-120000.json");
+        assert_eq!(files[0].name, "recur_20261022-013000.json");
+        assert_eq!(files[1].name, "recur_20261021-120000.json");
         assert_eq!(
             files[0].last_modified.unwrap(),
             Utc.with_ymd_and_hms(2026, 10, 22, 1, 30, 0).unwrap()
@@ -471,24 +472,31 @@ mod tests {
         let xml = r#"<?xml version="1.0"?>
 <multistatus xmlns="DAV:">
   <response>
-    <href>/dav/quota-watch/quota-watch%20copy.json</href>
-    <propstat><prop><displayname>quota-watch copy.json</displayname></prop></propstat>
+    <href>/dav/recur/recur%20copy.json</href>
+    <propstat><prop><displayname>recur copy.json</displayname></prop></propstat>
   </response>
 </multistatus>"#;
         let files = parse_propfind(xml).unwrap();
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].name, "quota-watch copy.json");
+        assert_eq!(files[0].name, "recur copy.json");
         assert!(files[0].last_modified.is_none());
     }
 
     #[test]
     fn parse_propfind_ignores_unrelated_files() {
         let xml = r#"<d:multistatus xmlns:d="DAV:">
-  <d:response><d:href>/dav/quota-watch/notes.txt</d:href></d:response>
-  <d:response><d:href>/dav/quota-watch/backup.json</d:href></d:response>
-  <d:response><d:href>/dav/quota-watch/services_20261021-120000.json</d:href></d:response>
+  <d:response><d:href>/dav/recur/notes.txt</d:href></d:response>
+  <d:response><d:href>/dav/recur/backup.json</d:href></d:response>
+  <d:response><d:href>/dav/recur/services_20261021-120000.json</d:href></d:response>
 </d:multistatus>"#;
         assert!(parse_propfind(xml).unwrap().is_empty());
+    }
+
+    #[test]
+    fn is_services_file_accepts_legacy_prefix() {
+        assert!(is_services_file("recur_20261022-013000.json"));
+        assert!(is_services_file("quota-watch_20261021-120000.json"));
+        assert!(!is_services_file("services_20261021-120000.json"));
     }
 
     #[test]
@@ -503,9 +511,9 @@ mod tests {
     #[test]
     fn timestamped_filename_matches_pattern() {
         let name = timestamped_filename();
-        assert!(name.starts_with("quota-watch_"));
+        assert!(name.starts_with("recur_"));
         assert!(name.ends_with(".json"));
-        assert_eq!(name.len(), "quota-watch_20261022-013000.json".len());
+        assert_eq!(name.len(), "recur_20261022-013000.json".len());
     }
 
     #[test]
@@ -518,14 +526,11 @@ mod tests {
     fn client_normalizes_remote_dir() {
         let config = WebdavConfig {
             server_url: "https://dav.example.com/".into(),
-            remote_dir: "/quota-watch/".into(),
+            remote_dir: "/recur/".into(),
             ..Default::default()
         };
         let client = WebdavClient::new(&config).unwrap();
-        assert_eq!(
-            client.base_url.as_str(),
-            "https://dav.example.com/quota-watch/"
-        );
+        assert_eq!(client.base_url.as_str(), "https://dav.example.com/recur/");
     }
 
     #[test]
@@ -552,7 +557,7 @@ mod tests {
                 server_url: "https://dav.example.com".into(),
                 username: "u".into(),
                 password: "topsecret".into(),
-                remote_dir: "/quota-watch".into(),
+                remote_dir: "/recur".into(),
             }),
             ..Default::default()
         };
@@ -586,7 +591,7 @@ mod tests {
                 server_url: "https://dav.example.com/dav".into(),
                 username: "u".into(),
                 password: secret.into(),
-                remote_dir: "/quota-watch".into(),
+                remote_dir: "/recur".into(),
             }),
             ..Default::default()
         };

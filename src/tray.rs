@@ -18,7 +18,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 
 /// 托盘图标 ID。
-const TRAY_ID: &str = "quota-watch-tray";
+const TRAY_ID: &str = "recur-tray";
 /// 菜单项 ID：显示/隐藏（按窗口当前状态切换）。
 const MENU_TOGGLE: &str = "toggle";
 /// 菜单项 ID：退出应用。
@@ -26,7 +26,7 @@ const MENU_QUIT: &str = "quit";
 
 /// 加载嵌入的 PNG 图标为 `tray_icon::Icon`。
 fn load_icon() -> Icon {
-    let png = include_bytes!("../assets/icons/quota-watch-128.png");
+    let png = include_bytes!("../assets/icons/recur-128.png");
     let img = image::load_from_memory(png)
         .expect("加载托盘图标失败")
         .to_rgba8();
@@ -56,7 +56,7 @@ pub fn spawn_tray(cx: &mut App, window: AnyWindowHandle, visible: Arc<AtomicBool
     .expect("创建托盘菜单失败");
     let tray = TrayIconBuilder::new()
         .with_id(TRAY_ID)
-        .with_tooltip("配置重置提醒")
+        .with_tooltip("周期提醒")
         .with_icon(load_icon())
         .with_menu(Box::new(menu))
         .build()

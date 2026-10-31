@@ -23,14 +23,14 @@ fn run_script(name: &str, body: &str) -> bool {
         ? workspace.windowList() : workspace.clientList();
     for (var i = 0; i < wins.length; i++) {
         var w = wins[i];
-        if (w.resourceClass && w.resourceClass.indexOf('quota') !== -1) {
+        if (w.resourceClass && w.resourceClass.indexOf('recur') !== -1) {
 ";
     const FOOTER: &str = "\
         }
     }
 })();
 ";
-    let path = std::env::temp_dir().join(format!("quota-watch-{name}.js"));
+    let path = std::env::temp_dir().join(format!("recur-{name}.js"));
     if std::fs::write(&path, format!("{HEADER}{body}{FOOTER}")).is_err() {
         return false;
     }
